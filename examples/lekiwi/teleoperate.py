@@ -306,7 +306,7 @@ def xyz_inverse_kinematics(robot: Robot, x, y, z, l1=0.1159, l2=0.1375, l3=0.175
 
 
 
-def xyzp_inverse_kinematics(x0, y0, z0, pitch, l1=0.1159, l2=0.1375, l3=0.175):
+def xyzp_inverse_kinematics(robot: Robot, x0, y0, z0, pitch_rad, l1=0.1159, l2=0.1375, l3=0.195):
     """
     Calculate inverse kinematics for a 2-link robotic arm, considering joint offsets
     
@@ -316,12 +316,16 @@ def xyzp_inverse_kinematics(x0, y0, z0, pitch, l1=0.1159, l2=0.1375, l3=0.175):
         z: End effector z coordiante
         l1: Upper arm length (default 0.1159 m)
         l2: Lower arm length (default 0.1375 m)
-        l3: Wrist joint to end effector tip/control point length (default 0.175 m)
+        l3: Wrist joint to end effector tip/control point length (default 0.195 m)
         
     Returns:
         ((success/fail, (joint1, joint2, joint3, joint4)): Joint angles in degrees as defined in the URDF file
     """
 
+
+    curr_obs = read_angles(robot)
+    curr_t2 = curr_obs["arm_shoulder_pan"] * math.pi / 180
+    curr_t3 = curr_obs["arm_elbow_flex"] * math.pi / 180
 
     # Convert from the end effector's frame to the wrist's frame
     # x, y, z = ee_to_wrist_frame(robot, x, y, z, l3)
@@ -330,16 +334,27 @@ def xyzp_inverse_kinematics(x0, y0, z0, pitch, l1=0.1159, l2=0.1375, l3=0.175):
 
     r = math.sqrt(x0**2 + y0**2)
     try:
-        res = nsolve([l1 * sin(x) + l2 * cos(x + y) + l3 * cos(pitch) - r, l1 * cos(x) - l2 * sin(x + y) + l3 * sin(pitch) - z0], [x, y], [0, 0], prec=5)
+        res = nsolve([l1 * sin(x) + l2 * cos(x + y) + l3 * cos(pitch_rad) - r, l1 * cos(x) - l2 * sin(x + y) + l3 * sin(pitch_rad) - z0], [x, y], [curr_t2, curr_t3], prec=5)
     except Exception:
         return (False, (0, 0, 0, 0))
 
     joint1_deg = math.degrees(math.atan2(y0, x0))
     joint2_deg = math.degrees(res[0])
     joint3_deg = math.degrees(res[1])
-    joint4_deg = -1 * (joint2_deg + joint3_deg + pitch)
+    joint4_deg = -1 * (joint2_deg + joint3_deg + (pitch_rad * 180 / math.pi))
 
-    return (True, (joint1_deg, joint2_deg, joint3_deg, joint4_deg))
+    THETA_MAX = 100
+    THETA_MIN = -100
+
+    joints_degs = (joint1_deg, joint2_deg, joint3_deg, joint4_deg)
+
+    for joint in joints_degs:
+        if (joint > THETA_MAX or joint < THETA_MIN):
+            # numerical solver returned a bad solution (the robot cannot physicall reach it).
+            # therefore, we say the IK solver failed.
+            return (False, (0, 0, 0, 0)) 
+
+    return (True, joints_degs)
 
 
 
@@ -711,26 +726,28 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
         control_freq: control frequency (Hz)
     """
     current_xyz = {"x" : xyz_start_pos[0], "y" : xyz_start_pos[1], "z" : xyz_start_pos[2]}
-    old_xyz = current_xyz
+    xyz_ranges = {"x" : {"min" : 0.01, "max" : 0.45}, "y" : {"min" : -0.45, "max" : 0.45}, "z" : {"min" : -0.4, "max" : 0.45}}
+
 
     control_period = 1.0 / control_freq
     # control_period = 0.5
     
     # Initialize pitch control variables
     pitch = 0.0  # Initial pitch adjustment
-    pitch_step = 1  # Pitch adjustment step size
-    
+    pitch_deg_per_sec = 50 # pitch moves at 20 degrees per second (assuming cycles are instant, which they aren't)
+    xyz_L1_m_per_sec = 0.2 # speed per direction
+
     print(f"Starting P control loop, control frequency: {control_freq}Hz, proportional gain: {kp}")
     
     while True:
         try:
             # Get keyboard input
             keyboard_action = keyboard.get_action()
-            old_xyz = current_xyz
             
             if keyboard_action:
                 # Process keyboard input, update target positions
-                for key, value in keyboard_action.items():
+                changed_xyzp = False
+                for key in keyboard_action.keys():
                     if key == 'x':
                         # Exit program, first return to start position
                         print("Exit command detected, returning to start position...")
@@ -739,30 +756,30 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
                     
                     # Joint control mapping
                     joint_controls = {
-                        # 'q': ('arm_shoulder_pan', -1),    # Joint 1 decrease
-                        # 'a': ('arm_shoulder_pan', 1),     # Joint 1 increase
-                        't': ('arm_wrist_roll', -1),      # Joint 5 decrease
-                        'g': ('arm_wrist_roll', 1),       # Joint 5 increase
-                        'y': ('arm_gripper', -1),         # Joint 6 decrease
-                        'h': ('arm_gripper', 1),          # Joint 6 increase
+                        'y': ('arm_wrist_roll', -100 * control_period),      # Joint 5 decrease
+                        'h': ('arm_wrist_roll', 100 * control_period),       # Joint 5 increase
+                        'g': ('arm_gripper', -100 * control_period),         # Joint 6 decrease
+                        't': ('arm_gripper', 100 * control_period),          # Joint 6 increase
                     }
                     
-                    # x,y coordinate control
+                    # xyz coordinate control
                     xyz_controls = {
-                        'q': ('x', -0.004),  # x decrease
-                        'a': ('x', 0.004),   # x increase
-                        'w': ('y', -0.004),  # y decrease
-                        's': ('y', 0.004),   # y increase
-                        'e': ('z', -0.004),  # y decrease
-                        'd': ('z', 0.004),   # y increase
+                        'w': ('x', xyz_L1_m_per_sec * control_period),   # x increase
+                        's': ('x', -xyz_L1_m_per_sec * control_period),  # x decrease
+                        'd': ('y', xyz_L1_m_per_sec * control_period),   # y increase
+                        'a': ('y', -xyz_L1_m_per_sec * control_period),  # y decrease
+                        'q': ('z', xyz_L1_m_per_sec * control_period),   # y increase
+                        'e': ('z', -xyz_L1_m_per_sec * control_period),  # y decrease
                     }
                     
                     # Pitch control
                     if key == 'r':
-                        pitch += pitch_step
+                        changed_xyzp = True
+                        pitch = min(pitch + (pitch_deg_per_sec * control_period * math.pi / 180), math.pi)
                         print(f"Increase pitch adjustment: {pitch:.3f}")
                     elif key == 'f':
-                        pitch -= pitch_step
+                        changed_xyzp = True
+                        pitch = max(pitch - (pitch_deg_per_sec * control_period * math.pi / 180), -math.pi)
                         print(f"Decrease pitch adjustment: {pitch:.3f}")
                     
                     if key in joint_controls:
@@ -774,67 +791,35 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
                             print(f"Update target position {joint_name}: {current_target} -> {new_target}")
                     
                     elif key in xyz_controls:
+                        changed_xyzp = True
                         coord, delta = xyz_controls[key]
-                        current_xyz[coord] += delta
+                        current_xyz[coord] = max(min(current_xyz[coord] + delta, xyz_ranges[coord]["max"]), xyz_ranges[coord]["min"])
 
-                # only run ik once per cycle
-                ik_result = xyzp_inverse_kinematics(current_xyz['x'], current_xyz['y'], current_xyz['z'], pitch)
-                if (ik_result[0]):
-                    # found a solution, update joints
-                    target_positions['arm_shoulder_pan'] = ik_result[1][0]
-                    target_positions['arm_shoulder_lift'] = ik_result[1][1]
-                    target_positions['arm_elbow_flex'] = ik_result[1][2]
-                    target_positions['arm_wrist_flex'] = ik_result[1][3]
-                else:
-                    print("Would leave range")
-                    current_xyz = old_xyz # revert changes made this cycle
+                # only run ik once per cycle, and only if we actually changed something.
+                if (changed_xyzp):
+                    ik_result = xyzp_inverse_kinematics(robot, current_xyz['x'], current_xyz['y'], current_xyz['z'], pitch)
+                    if (ik_result[0]):
+                        # found a solution, update joints
+                        target_positions['arm_shoulder_pan'] = ik_result[1][0]
+                        target_positions['arm_shoulder_lift'] = ik_result[1][1]
+                        target_positions['arm_elbow_flex'] = ik_result[1][2]
+                        target_positions['arm_wrist_flex'] = ik_result[1][3]
 
-            # # Apply pitch adjustment to arm_wrist_flex
-            # # Calculate arm_wrist_flex target position based on arm_shoulder_lift and arm_elbow_flex
-            # if 'arm_shoulder_lift' in target_positions and 'arm_elbow_flex' in target_positions:
-            #     target_positions['arm_wrist_flex'] = - target_positions['arm_shoulder_lift'] - target_positions['arm_elbow_flex'] + pitch
-            #     # Show current pitch value (display every 100 steps to avoid screen flooding)
-            #     if hasattr(p_control_loop, 'step_counter'):
-            #         p_control_loop.step_counter += 1
-            #     else:
-            #         p_control_loop.step_counter = 0
-                
-            #     if p_control_loop.step_counter % 100 == 0:
-            #         print(f"Current pitch adjustment: {pitch:.3f}, arm_wrist_flex target: {target_positions['arm_wrist_flex']:.3f}")
-            
-            # Get current robot state
-            current_obs = robot.get_observation()
-            
-            # Extract current joint positions
-            current_positions = {}
-            for key, value in current_obs.items():
-                if key.endswith('.pos'):
-                    motor_name = key.removesuffix('.pos')
-                    # Apply calibration coefficients
-                    calibrated_value = apply_joint_calibration(motor_name, value)
-                    current_positions[motor_name] = calibrated_value
-            
-            # P control calculation
+            # Create robot action
             robot_action = {}
             for joint_name, target_pos in target_positions.items():
-                if joint_name in current_positions:
-                    current_pos = current_positions[joint_name]
-                    error = target_pos - current_pos
-                    
-                    # P control: output = Kp * error
-                    control_output = kp * error
-                    
-                    # Convert control output to position command
-                    new_position = current_pos + control_output
-                    robot_action[f"{joint_name}.pos"] = new_position
+                target_pos = target_positions[joint_name]
+                robot_action[f"{joint_name}.pos"] = target_pos
             
             # Send action to robot
             if robot_action:
+                # required for LeKiwi
                 robot_action["x.vel"] = 0.0
                 robot_action["y.vel"] = 0.0
                 robot_action["theta.vel"] = 0.0
 
-                print("was going to send action", robot_action)
+                # print("was going to send action", robot_action)
+                print(current_xyz, pitch * 180 / math.pi)
                 robot.send_action(robot_action)
             
             time.sleep(control_period)
@@ -843,34 +828,36 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
             print("User interrupted program")
             break
         except Exception as e:
-            print(f"P control loop error: {e}")
+            print(f"Control loop error: {e}")
             traceback.print_exc()
             break
 
 
 
-
-def read_and_print_angles(robot: Robot):
-    """
-    Prints the robot's current joint angles, and returns an dictionary with those joint angles.
-    """
+def read_angles(robot: Robot):
     # Read initial joint angles
-    print("Reading initial joint angles...")
     start_obs = robot.get_observation()
     start_positions = {}
     for key, value in start_obs.items():
         if key.endswith('.pos'):
             motor_name = key.removesuffix('.pos')
-            start_positions[motor_name] = int(value)  # Don't apply calibration coefficients
+            start_positions[motor_name] = value
+
+    return start_positions
+
+def read_and_print_angles(robot: Robot):
+    """
+    Prints the robot's current joint angles, and returns an dictionary with those joint angles.
+    """
+    start_positions = read_angles(robot)
     
     print("Joint angles:")
     for joint_name, position in start_positions.items():
-        print(f"  {joint_name}: {position}°")
+        print(f"  {joint_name}: {int(position)}°")
 
     return start_positions
 
 def main():
-    # TODO: Assemble the kiwi, configure it if necessary, set the port for the leader arm if using that, and continue 
 
     FPS = 30
 
@@ -934,7 +921,7 @@ def main():
             }
             
             # Initialize x,y coordinate control
-            x0, y0, z0 = 0.1375 + 0.175, 0.0, 0.1159  # x0 = length of elbow to end effector (arm pointing straight out), z0 = length of shoulder to elbow (pointing straight up). Robot starts at all (non-gripper) angles = 0
+            x0, y0, z0 = 0.1375 + 0.195, 0.0, 0.1159  # x0 = length of elbow to end effector (arm pointing straight out), z0 = length of shoulder to elbow (pointing straight up). Robot starts at all (non-gripper) angles = 0
             print(f"Initialize end effector position: x={x0:.4f}, y={y0:.4f}, z={z0:.4f}")
             
             
@@ -942,9 +929,9 @@ def main():
             # print("- Q/A: Joint 1 (arm_shoulder_pan) decrease/increase")
             # print("- W/S: Control end effector r coordinate (joint2+3)")
             # print("- E/D: Control end effector z coordinate (joint2+3)")
-            print("- Q/A: X coordinate decrease/increase")
-            print("- W/S: Y coordinate change")
-            print("- E/D: Z coordinate change")
+            print("- W/S: X coordinate (forward/backward)")
+            print("- A/D: Y coordinate change (left/right)")
+            print("- Q/E: Z coordinate change (up/down)")
             print("- R/F: Pitch adjustment increase/decrease (affects arm_wrist_flex)")
             print("- T/G: Joint 5 (arm_wrist_roll) decrease/increase")
             print("- Y/H: Joint 6 (arm_gripper) decrease/increase")
@@ -972,7 +959,7 @@ def main():
             # print(xyz_inverse_kinematics(robot, x0, y0, z0))
 
 
-            # print(xyzp_inverse_kinematics(0.25, 0, 0.11, 0))
+            # print(xyzp_inverse_kinematics(robot, 0.25, 0, 0.11, 0))
 
 
             # Disconnect
