@@ -314,6 +314,7 @@ def xyzp_inverse_kinematics(robot: Robot, x0, y0, z0, pitch_rad, l1=0.1159, l2=0
         x: End effector x coordinate (forward from the base of the arm is positive)
         y: End effector y coordinate (positive y is to the arm's left (from the arm's perspective))
         z: End effector z coordiante
+        pitch_rad: the desired pitch in the world frame in radians.
         l1: Upper arm length (default 0.1159 m)
         l2: Lower arm length (default 0.1375 m)
         l3: Wrist joint to end effector tip/control point length (default 0.195 m)
@@ -322,15 +323,11 @@ def xyzp_inverse_kinematics(robot: Robot, x0, y0, z0, pitch_rad, l1=0.1159, l2=0
         ((success/fail, (joint1, joint2, joint3, joint4)): Joint angles in degrees as defined in the URDF file
     """
 
-
+    # Use the current angles for the 2nd and 3rd joints for the numerical solver's starting location. 
     curr_obs = read_angles(robot)
     curr_t2 = curr_obs["arm_shoulder_pan"] * math.pi / 180
     curr_t3 = curr_obs["arm_elbow_flex"] * math.pi / 180
 
-    # Convert from the end effector's frame to the wrist's frame
-    # x, y, z = ee_to_wrist_frame(robot, x, y, z, l3)
-    
-    # start doing the inverse kinematics for joints 1-3
 
     r = math.sqrt(x0**2 + y0**2)
     try:
@@ -358,370 +355,60 @@ def xyzp_inverse_kinematics(robot: Robot, x0, y0, z0, pitch_rad, l1=0.1159, l2=0
 
 
 
-
-
-
-    r = math.sqrt(x**2 + y**2)
-
-    # Calculate distance from origin to target point
-    phi_wrist = math.sqrt(r**2 + z**2)
-    phi_wrist_max = l1 + l2  # Maximum reachable distance
-    
-    # If target point is beyond maximum workspace, scale it to the boundary
-    if phi_wrist > phi_wrist_max:
-        print("greater than phi_wrist_max")
-        scale_factor = phi_wrist_max / phi_wrist
-        r *= scale_factor
-        z *= scale_factor
-        phi_wrist = phi_wrist_max
-    
-    # If target point is less than minimum workspace (|l1-l2|), scale it
-    phi_wrist_min = abs(l1 - l2)
-    if phi_wrist < phi_wrist_min and r > 0:
-        print("less than r_min")
-        scale_factor = phi_wrist_min / phi_wrist
-        r *= scale_factor
-        z *= scale_factor
-        phi_wrist = phi_wrist_min
-    
-    # Use law of cosines to calculate theta2
-    cos_theta_l = -(phi_wrist**2 - l1**2 - l2**2) / (2 * l1 * l2)
-    
-    # Calculate theta2 (elbow angle)
-    theta_l = math.acos(cos_theta_l)
-    joint3 = math.pi / 2 - theta_l
-
-    # Calculate theta1 (shoulder angle)
-    beta = math.atan2(z, r)
-
-    cos_theta_b = -(l2**2 - l1**2 - phi_wrist**2) / (2 * l1 * phi_wrist)
-    theta_b = math.acos(cos_theta_b)
-
-    joint2 = -1 * (theta_b + beta - math.pi / 2)
-
-    # we shouldn't need to do bounds checking because the motor bus class will enforce that the robot
-    # will never leave the range of motion (mins and maxes) defined during calibration.  
-    
-    # Convert from radians to degrees
-
-    joint2_deg = math.degrees(joint2)
-    joint3_deg = math.degrees(joint3)
-
-    return joint1_deg, joint2_deg, joint3_deg
-
-
-def move_to_zero_position(robot, duration=3.0, kp=0.5):
+def move_to_zero_position(robot, duration=3.0):
     """
-    Use P control to slowly move robot to zero position
+    Move the robot to (what it thinks) is the zero/"middle" position.
     
     Args:
         robot: robot instance
         duration: time to move to zero position (seconds)
-        kp: proportional gain
     """
-    print("Using P control to slowly move robot to zero position...")
     
-    # Get current robot state
-    current_obs = robot.get_observation()
-    
-    # Extract current joint positions
-    current_positions = {}
-    for key, value in current_obs.items():
-        if key.endswith('.pos'):
-            motor_name = key.removesuffix('.pos')
-            current_positions[motor_name] = value
-    
-    # Zero position targets
-    zero_positions = {
-        'arm_shoulder_pan': 0.0,
-        'arm_shoulder_lift': 0.0,
-        'arm_elbow_flex': 0.0,
-        'arm_wrist_flex': 0.0,
-        'arm_wrist_roll': 0.0,
-        'arm_gripper': 0.0
-    }
-    
-    # Calculate control steps
-    control_freq = 50  # 50Hz control frequency
-    total_steps = int(duration * control_freq)
-    step_time = 1.0 / control_freq
-    
-    print(f"Will use P control to move to zero position in {duration} seconds, control frequency: {control_freq}Hz, proportional gain: {kp}")
-    
-    for step in range(total_steps):
-        # Get current robot state
-        current_obs = robot.get_observation()
-        current_positions = {}
-        for key, value in current_obs.items():
-            if key.endswith('.pos'):
-                motor_name = key.removesuffix('.pos')
-                # Apply calibration coefficients
-                calibrated_value = apply_joint_calibration(motor_name, value)
-                current_positions[motor_name] = calibrated_value
-        
-        # P control calculation
-        robot_action = {}
-        for joint_name, target_pos in zero_positions.items():
-            if joint_name in current_positions:
-                current_pos = current_positions[joint_name]
-                error = target_pos - current_pos
-                
-                # P control: output = Kp * error
-                control_output = kp * error
-                
-                # Convert control output to position command
-                new_position = current_pos + control_output
-                robot_action[f"{joint_name}.pos"] = new_position
-        
-        # Send action to robot
-        if robot_action:
-            robot_action["x.vel"] = 0.0
-            robot_action["y.vel"] = 0.0
-            robot_action["theta.vel"] = 0.0
+    zero_position = {'arm_shoulder_pan': 0.0, 'arm_shoulder_lift': 0.0, 'arm_elbow_flex': 0.0, 'arm_wrist_flex': 0.0, 'arm_wrist_roll': 0.0, 'arm_gripper': 0.0}
+    move_to_position(robot, zero_position, duration)
 
-            robot.send_action(robot_action)
-        
-        # Show progress
-        if step % (control_freq // 2) == 0:  # Show progress every 0.5 seconds
-            progress = (step / total_steps) * 100
-            print(f"Moving to zero position progress: {progress:.1f}%")
-        
-        time.sleep(step_time)
-    
-    print("Robot has moved to zero position")
-
-def return_to_start_position(robot, start_positions, kp=0.5, control_freq=50):
+def move_to_position(robot: Robot, position, duration=3.0):
     """
-    Use P control to return to start position
+    Moves to the specified position. Any unspecified joints will be maintained. Currently waits for 3 seconds for action to finish.
     
     Args:
         robot: robot instance
-        start_positions: start joint position dictionary
-        kp: proportional gain
-        control_freq: control frequency (Hz)
+        start_positions: joint position dictionary
     """
-    print("Returning to start position...")
     
-    control_period = 1.0 / control_freq
-    max_steps = int(5.0 * control_freq)  # Maximum 5 seconds
-    
-    for step in range(max_steps):
-        # Get current robot state
-        current_obs = robot.get_observation()
-        current_positions = {}
-        for key, value in current_obs.items():
-            if key.endswith('.pos'):
-                motor_name = key.removesuffix('.pos')
-                current_positions[motor_name] = value  # Don't apply calibration coefficients
-        
-        # P control calculation
-        robot_action = {}
-        total_error = 0
-        for joint_name, target_pos in start_positions.items():
+
+    current_positions = read_angles(robot)
+    robot_action = {}
+    for joint_name, target_pos in position.items():
             if joint_name in current_positions:
-                current_pos = current_positions[joint_name]
-                error = target_pos - current_pos
-                total_error += abs(error)
-                
-                # P control: output = Kp * error
-                control_output = kp * error
-                
-                # Convert control output to position command
-                new_position = current_pos + control_output
-                robot_action[f"{joint_name}.pos"] = new_position
-        
-        # Send action to robot
-        if robot_action:
-            robot_action["x.vel"] = 0.0
-            robot_action["y.vel"] = 0.0
-            robot_action["theta.vel"] = 0.0
-
-            # print("commanding robot to send action:\n", robot_action)
-            robot.send_action(robot_action)
-        
-        # Check if reached start position
-        print("Total error is, ", total_error)
-        if total_error < 2.0:  # If total error is less than 2 degrees, consider reached
-            print("Returned to start position")
-            break
-        
-        time.sleep(control_period)
+                robot_action[f"{joint_name}.pos"] = target_pos
     
-    print("Return to start position completed")
+    # Send action to robot
+    if robot_action:
+        robot_action["x.vel"] = 0.0
+        robot_action["y.vel"] = 0.0
+        robot_action["theta.vel"] = 0.0
 
-# def p_control_loop(robot, keyboard, target_positions, start_positions, current_x, current_y, kp=0.5, control_freq=50):
-#     """
-#     P control loop
-    
-#     Args:
-#         robot: robot instance
-#         keyboard: keyboard instance
-#         target_positions: target joint position dictionary
-#         start_positions: start joint position dictionary
-#         current_x: current x coordinate (distance "forward" from the base of the robot)
-#         current_y: current y coordinate (left/right distance, left from the robot's perspective is positive)
-#         current_z: current z coordiante (z=0 is the same height as the 2nd motor)
-#         kp: proportional gain
-#         control_freq: control frequency (Hz)
-#     """
-#     control_period = 1.0 / control_freq
-    
-#     # Initialize pitch control variables
-#     pitch = 0.0  # Initial pitch adjustment
-#     pitch_step = 1  # Pitch adjustment step size
-    
-#     print(f"Starting P control loop, control frequency: {control_freq}Hz, proportional gain: {kp}")
-    
-#     while True:
-#         try:
-#             # Get keyboard input
-#             keyboard_action = keyboard.get_action()
-            
-#             if keyboard_action:
-#                 # Process keyboard input, update target positions
-#                 for key, value in keyboard_action.items():
-#                     if key == 'x':
-#                         # Exit program, first return to start position
-#                         print("Exit command detected, returning to start position...")
-#                         return_to_start_position(robot, start_positions, 0.2, control_freq)
-#                         return
-                    
-#                     # Joint control mapping
-#                     joint_controls = {
-#                         'q': ('arm_shoulder_pan', -1),    # Joint 1 decrease
-#                         'a': ('arm_shoulder_pan', 1),     # Joint 1 increase
-#                         't': ('arm_wrist_roll', -1),      # Joint 5 decrease
-#                         'g': ('arm_wrist_roll', 1),       # Joint 5 increase
-#                         'y': ('arm_gripper', -1),         # Joint 6 decrease
-#                         'h': ('arm_gripper', 1),          # Joint 6 increase
-#                     }
-                    
-#                     # x,y coordinate control
-#                     xy_controls = {
-#                         'w': ('x', -0.004),  # x decrease
-#                         's': ('x', 0.004),   # x increase
-#                         'e': ('y', -0.004),  # y decrease
-#                         'd': ('y', 0.004),   # y increase
-#                     }
-                    
-#                     # Pitch control
-#                     if key == 'r':
-#                         pitch += pitch_step
-#                         print(f"Increase pitch adjustment: {pitch:.3f}")
-#                     elif key == 'f':
-#                         pitch -= pitch_step
-#                         print(f"Decrease pitch adjustment: {pitch:.3f}")
-                    
-#                     if key in joint_controls:
-#                         joint_name, delta = joint_controls[key]
-#                         if joint_name in target_positions:
-#                             current_target = target_positions[joint_name]
-#                             new_target = int(current_target + delta)
-#                             target_positions[joint_name] = new_target
-#                             print(f"Update target position {joint_name}: {current_target} -> {new_target}")
-                    
-#                     elif key in xy_controls:
-#                         coord, delta = xy_controls[key]
-#                         if coord == 'x':
-#                             current_x += delta
-#                             if (ik_check_in_bounds(current_x, current_y) == True):
-#                                 # we're going to go out of range. Don't proceed. 
-#                                 # Calculate target angles for joint2 and joint3
-#                                 joint1_target, joint2_target, joint3_target = xyz_inverse_kinematics(robot, current_x, current_y)
-#                                 target_positions['arm_shoulder_pan'] = joint1_target
-#                                 target_positions['arm_shoulder_lift'] = joint2_target
-#                                 target_positions['arm_elbow_flex'] = joint3_target
-#                                 print(f"Update x coordinate: {current_x:.4f}, joint2={joint2_target:.3f}, joint3={joint3_target:.3f}")
-#                             else:
-#                                 print("would leave range")
-#                                 current_x -= delta
-#                         elif coord == 'y':
-#                             current_y += delta
-#                             if (ik_check_in_bounds(current_x, current_y) == True):
-#                                 # Calculate target angles for joint2 and joint3
-#                                 joint1_target, joint2_target, joint3_target = xyz_inverse_kinematics(current_x, current_y)
-#                                 target_positions['arm_shoulder_pan'] = joint1_target
-#                                 target_positions['arm_shoulder_lift'] = joint2_target
-#                                 target_positions['arm_elbow_flex'] = joint3_target
-#                                 print(f"Update y coordinate: {current_y:.4f}, joint2={joint2_target:.3f}, joint3={joint3_target:.3f}")
-#                             else:
-#                                 print("would leave range")
-#                                 current_y -= delta
-            
-#             # Apply pitch adjustment to arm_wrist_flex
-#             # Calculate arm_wrist_flex target position based on arm_shoulder_lift and arm_elbow_flex
-#             if 'arm_shoulder_lift' in target_positions and 'arm_elbow_flex' in target_positions:
-#                 target_positions['arm_wrist_flex'] = - target_positions['arm_shoulder_lift'] - target_positions['arm_elbow_flex'] + pitch
-#                 # Show current pitch value (display every 100 steps to avoid screen flooding)
-#                 if hasattr(p_control_loop, 'step_counter'):
-#                     p_control_loop.step_counter += 1
-#                 else:
-#                     p_control_loop.step_counter = 0
-                
-#                 if p_control_loop.step_counter % 100 == 0:
-#                     print(f"Current pitch adjustment: {pitch:.3f}, arm_wrist_flex target: {target_positions['arm_wrist_flex']:.3f}")
-            
-#             # Get current robot state
-#             current_obs = robot.get_observation()
-            
-#             # Extract current joint positions
-#             current_positions = {}
-#             for key, value in current_obs.items():
-#                 if key.endswith('.pos'):
-#                     motor_name = key.removesuffix('.pos')
-#                     # Apply calibration coefficients
-#                     calibrated_value = apply_joint_calibration(motor_name, value)
-#                     current_positions[motor_name] = calibrated_value
-            
-#             # P control calculation
-#             robot_action = {}
-#             for joint_name, target_pos in target_positions.items():
-#                 if joint_name in current_positions:
-#                     current_pos = current_positions[joint_name]
-#                     error = target_pos - current_pos
-                    
-#                     # P control: output = Kp * error
-#                     control_output = kp * error
-                    
-#                     # Convert control output to position command
-#                     new_position = current_pos + control_output
-#                     robot_action[f"{joint_name}.pos"] = new_position
-            
-#             # Send action to robot
-#             if robot_action:
-#                 robot_action["x.vel"] = 0.0
-#                 robot_action["y.vel"] = 0.0
-#                 robot_action["theta.vel"] = 0.0
+        print("commanding robot to send action:\n", robot_action)
+        robot.send_action(robot_action)
 
-#                 # print("was going to send action", robot_action)
-#                 robot.send_action(robot_action)
-            
-#             time.sleep(control_period)
-            
-#         except KeyboardInterrupt:
-#             print("User interrupted program")
-#             break
-#         except Exception as e:
-#             print(f"P control loop error: {e}")
-#             traceback.print_exc()
-#             break
+    busy_wait(duration)
 
 
 
-
-def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, start_positions, xyz_start_pos, kp=0.5, control_freq=50):
+def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, xyz_start_pos, control_freq=50):
     """
     P control loop
     
     Args:
         robot: robot instance
         keyboard: keyboard instance
-        target_positions: target joint position dictionary
-        start_positions: start joint position dictionary
+        target_positions: target positions for joints not controlled by inverse kinematics
         xyz_start_pos: a tuple containing:
             current_x: current x coordinate (distance "forward" from the base of the robot),
             current_y: current y coordinate (left/right distance, left from the robot's perspective is positive),
             current_z: current z coordiante (z=0 is the same height as the 2nd motor)
+            - the origin of the system is the shoulder lift joint.
         kp: proportional gain
         control_freq: control frequency (Hz)
     """
@@ -730,14 +417,13 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
 
 
     control_period = 1.0 / control_freq
-    # control_period = 0.5
     
     # Initialize pitch control variables
     pitch = 0.0  # Initial pitch adjustment
     pitch_deg_per_sec = 50 # pitch moves at 20 degrees per second (assuming cycles are instant, which they aren't)
     xyz_L1_m_per_sec = 0.2 # speed per direction
 
-    print(f"Starting P control loop, control frequency: {control_freq}Hz, proportional gain: {kp}")
+    print(f"Starting P control loop, control frequency: {control_freq}Hz")
     
     while True:
         try:
@@ -751,7 +437,7 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
                     if key == 'x':
                         # Exit program, first return to start position
                         print("Exit command detected, returning to start position...")
-                        return_to_start_position(robot, start_positions, 0.2, control_freq)
+                        move_to_zero_position(robot)
                         return
                     
                     # Joint control mapping
@@ -785,10 +471,7 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
                     if key in joint_controls:
                         joint_name, delta = joint_controls[key]
                         if joint_name in target_positions:
-                            current_target = target_positions[joint_name]
-                            new_target = int(current_target + delta)
-                            target_positions[joint_name] = new_target
-                            print(f"Update target position {joint_name}: {current_target} -> {new_target}")
+                            target_positions[joint_name] += delta
                     
                     elif key in xyz_controls:
                         changed_xyzp = True
@@ -866,8 +549,6 @@ def main():
     teleop_arm_config = SO100LeaderConfig(port="COM5", id="my_awesome_leader_arm")
     keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
-    # LeKiwiConfig(use_degrees=True)
-
     robot = LeKiwiClient(robot_config)
     leader_arm = SO100Leader(teleop_arm_config)
     keyboard = KeyboardTeleop(keyboard_config)
@@ -882,12 +563,6 @@ def main():
     if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
         raise ValueError("Robot, leader arm of keyboard is not connected!")
 
-
-    # from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
-    # my_follower = SO101Follower(SO101FollowerConfig(port="hi", use_degrees=True))
-
-
-    # my_follower.bus.sync_read("Present_Position")
 
     mode_dict = {0 : "ik", 1 : "print ctrl", 2 : "normal", 3 : "zero"}
     mode = mode_dict[0]
@@ -917,18 +592,20 @@ def main():
             'arm_elbow_flex': 0.0,
             'arm_wrist_flex': 0.0,
             'arm_wrist_roll': 0.0,
-            'arm_gripper': 100.0
+            'arm_gripper': 0.0
             }
             
             # Initialize x,y coordinate control
-            x0, y0, z0 = 0.1375 + 0.195, 0.0, 0.1159  # x0 = length of elbow to end effector (arm pointing straight out), z0 = length of shoulder to elbow (pointing straight up). Robot starts at all (non-gripper) angles = 0
+            shoulder_to_elbow_len = 0.1159
+            elbow_to_wrist_len = 0.1375
+            wrist_to_ee_len = 0.195
+
+            # coordinates for the zero position (which the robot starts at)
+            x0, y0, z0 = elbow_to_wrist_len + wrist_to_ee_len, 0.0, shoulder_to_elbow_len
             print(f"Initialize end effector position: x={x0:.4f}, y={y0:.4f}, z={z0:.4f}")
             
             
             print("Keyboard control instructions:")
-            # print("- Q/A: Joint 1 (arm_shoulder_pan) decrease/increase")
-            # print("- W/S: Control end effector r coordinate (joint2+3)")
-            # print("- E/D: Control end effector z coordinate (joint2+3)")
             print("- W/S: X coordinate (forward/backward)")
             print("- A/D: Y coordinate change (left/right)")
             print("- Q/E: Z coordinate change (up/down)")
@@ -940,9 +617,8 @@ def main():
             print("="*50)
             print("Note: Robot will continuously move to target positions")
             
-            # Start P control loop
             # third slot is the initial target positiosn for all the joints that aren't being controlled by inverse kinematics.
-            p_control_loop_2(robot, keyboard, zero_poses, start_positions, (x0, y0, z0), kp=0.5, control_freq=50)
+            p_control_loop_2(robot, keyboard, zero_poses, (x0, y0, z0), control_freq=50)
             
             # r0, z0 = 0.15, 0.1159 
 
