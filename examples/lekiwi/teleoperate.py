@@ -1,6 +1,6 @@
 import time
 
-from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig, LeKiwiConfig
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
 from lerobot.utils.robot_utils import busy_wait
@@ -46,7 +46,21 @@ def apply_joint_calibration(joint_name, raw_position):
             return calibrated_position
     return raw_position  # if no calibration coefficient found, return original value
 
-def inverse_kinematics(x, y, l1=0.1159, l2=0.1350):
+
+def ik_check_in_bounds(x, y, l1=0.1159, l2=0.1350):
+    # Calculate joint2 and joint3 offsets in theta1 and theta2
+    theta1_offset = math.atan2(0.028, 0.11257)  # theta1 offset when joint2=0
+    theta2_offset = math.atan2(0.0052, 0.1349) + theta1_offset  # theta2 offset when joint3=0
+    
+    # Calculate distance from origin to target point
+    r = math.sqrt(x**2 + y**2)
+    r_max = l1 + l2  # Maximum reachable distance
+    r_min = abs(l1 - l2)
+
+    return not (r > r_max or r < r_min)    
+
+
+def inverse_kinematics(r, z, l1=0.1159, l2=0.1350):
     """
     Calculate inverse kinematics for a 2-link robotic arm, considering joint offsets
     
@@ -57,39 +71,41 @@ def inverse_kinematics(x, y, l1=0.1159, l2=0.1350):
         l2: Lower arm length (default 0.1350 m)
         
     Returns:
-        joint2, joint3: Joint angles in radians as defined in the URDF file
+        joint2, joint3: Joint angles in degrees as defined in the URDF file
     """
     # Calculate joint2 and joint3 offsets in theta1 and theta2
     theta1_offset = math.atan2(0.028, 0.11257)  # theta1 offset when joint2=0
     theta2_offset = math.atan2(0.0052, 0.1349) + theta1_offset  # theta2 offset when joint3=0
     
     # Calculate distance from origin to target point
-    r = math.sqrt(x**2 + y**2)
-    r_max = l1 + l2  # Maximum reachable distance
+    phi = math.sqrt(r**2 + z**2)
+    phi_max = l1 + l2  # Maximum reachable distance
     
     # If target point is beyond maximum workspace, scale it to the boundary
-    if r > r_max:
-        scale_factor = r_max / r
-        x *= scale_factor
-        y *= scale_factor
-        r = r_max
+    if phi > phi_max:
+        print("greater than phi_max")
+        scale_factor = phi_max / phi
+        r *= scale_factor
+        z *= scale_factor
+        phi = phi_max
     
     # If target point is less than minimum workspace (|l1-l2|), scale it
-    r_min = abs(l1 - l2)
-    if r < r_min and r > 0:
-        scale_factor = r_min / r
-        x *= scale_factor
-        y *= scale_factor
-        r = r_min
+    phi_min = abs(l1 - l2)
+    if phi < phi_min and r > 0:
+        print("less than r_min")
+        scale_factor = phi_min / phi
+        r *= scale_factor
+        z *= scale_factor
+        phi = phi_min
     
     # Use law of cosines to calculate theta2
-    cos_theta2 = -(r**2 - l1**2 - l2**2) / (2 * l1 * l2)
+    cos_theta2 = -(phi**2 - l1**2 - l2**2) / (2 * l1 * l2)
     
     # Calculate theta2 (elbow angle)
     theta2 = math.pi - math.acos(cos_theta2)
     
     # Calculate theta1 (shoulder angle)
-    beta = math.atan2(y, x)
+    beta = math.atan2(z, r)
     gamma = math.atan2(l2 * math.sin(theta2), l1 + l2 * math.cos(theta2))
     theta1 = beta + gamma
     
@@ -264,7 +280,6 @@ def p_control_loop(robot, keyboard, target_positions, start_positions, current_x
         control_freq: control frequency (Hz)
     """
     control_period = 1.0 / control_freq
-    control_period = 5
     
     # Initialize pitch control variables
     pitch = 0.0  # Initial pitch adjustment
@@ -324,18 +339,27 @@ def p_control_loop(robot, keyboard, target_positions, start_positions, current_x
                         coord, delta = xy_controls[key]
                         if coord == 'x':
                             current_x += delta
-                            # Calculate target angles for joint2 and joint3
-                            joint2_target, joint3_target = inverse_kinematics(current_x, current_y)
-                            target_positions['arm_shoulder_lift'] = joint2_target
-                            target_positions['arm_elbow_flex'] = joint3_target
-                            print(f"Update x coordinate: {current_x:.4f}, joint2={joint2_target:.3f}, joint3={joint3_target:.3f}")
+                            if (ik_check_in_bounds(current_x, current_y) == True):
+                                # we're going to go out of range. Don't proceed. 
+                                # Calculate target angles for joint2 and joint3
+                                joint2_target, joint3_target = inverse_kinematics(current_x, current_y)
+                                target_positions['arm_shoulder_lift'] = joint2_target
+                                target_positions['arm_elbow_flex'] = joint3_target
+                                print(f"Update x coordinate: {current_x:.4f}, joint2={joint2_target:.3f}, joint3={joint3_target:.3f}")
+                            else:
+                                print("would leave range")
+                                current_x -= delta
                         elif coord == 'y':
                             current_y += delta
-                            # Calculate target angles for joint2 and joint3
-                            joint2_target, joint3_target = inverse_kinematics(current_x, current_y)
-                            target_positions['arm_shoulder_lift'] = joint2_target
-                            target_positions['arm_elbow_flex'] = joint3_target
-                            print(f"Update y coordinate: {current_y:.4f}, joint2={joint2_target:.3f}, joint3={joint3_target:.3f}")
+                            if (ik_check_in_bounds(current_x, current_y) == True):
+                                # Calculate target angles for joint2 and joint3
+                                joint2_target, joint3_target = inverse_kinematics(current_x, current_y)
+                                target_positions['arm_shoulder_lift'] = joint2_target
+                                target_positions['arm_elbow_flex'] = joint3_target
+                                print(f"Update y coordinate: {current_y:.4f}, joint2={joint2_target:.3f}, joint3={joint3_target:.3f}")
+                            else:
+                                print("would leave range")
+                                current_y -= delta
             
             # Apply pitch adjustment to arm_wrist_flex
             # Calculate arm_wrist_flex target position based on arm_shoulder_lift and arm_elbow_flex
@@ -382,8 +406,8 @@ def p_control_loop(robot, keyboard, target_positions, start_positions, current_x
                 robot_action["y.vel"] = 0.0
                 robot_action["theta.vel"] = 0.0
 
-                print("was going to send action", robot_action)
-                # robot.send_action(robot_action)
+                # print("was going to send action", robot_action)
+                robot.send_action(robot_action)
             
             time.sleep(control_period)
             
@@ -403,9 +427,11 @@ def main():
     FPS = 30
 
     # Create the robot and teleoperator configurations
-    robot_config = LeKiwiClientConfig(remote_ip="172.18.134.136", id="my_lekiwi")
-    teleop_arm_config = SO100LeaderConfig(port="/dev/tty.usbmodem585A0077581", id="my_awesome_leader_arm")
+    robot_config = LeKiwiClientConfig(remote_ip="192.168.0.133", id="my_lekiwi2")
+    teleop_arm_config = SO100LeaderConfig(port="COM5", id="my_awesome_leader_arm")
     keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
+
+    # LeKiwiConfig(use_degrees=True)
 
     robot = LeKiwiClient(robot_config)
     leader_arm = SO100Leader(teleop_arm_config)
@@ -422,161 +448,200 @@ def main():
         raise ValueError("Robot, leader arm of keyboard is not connected!")
 
 
+    # from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
+    # my_follower = SO101Follower(SO101FollowerConfig(port="hi", use_degrees=True))
+
+
+    # my_follower.bus.sync_read("Present_Position")
+
+    mode_dict = {0 : "ik", 1 : "print ctrl", 2 : "normal", 3 : "zero"}
+    mode = mode_dict[0]
 
     # IK control code start 
-    try:
-        # Read initial joint angles
-        print("Reading initial joint angles...")
-        start_obs = robot.get_observation()
+    if (mode == "ik"):
+        try:
+            # Read initial joint angles
+            print("Reading initial joint angles...")
+            start_obs = robot.get_observation()
+            start_positions = {}
+            for key, value in start_obs.items():
+                if key.endswith('.pos'):
+                    motor_name = key.removesuffix('.pos')
+                    start_positions[motor_name] = int(value)  # Don't apply calibration coefficients
+            
+            print("Initial joint angles:")
+            for joint_name, position in start_positions.items():
+                print(f"  {joint_name}: {position}°")
+            
+            # Move to zero position
+
+            zero_action = {'arm_shoulder_pan.pos': 0.0, 'arm_shoulder_lift.pos': 0.0, 'arm_elbow_flex.pos': 0.0, 'arm_wrist_flex.pos': 0.0, 'arm_wrist_roll.pos': 0.0, 'arm_gripper.pos': 11.0, 'x.vel': 0.0, 'y.vel': 0.0, 'theta.vel': 0.0}
+            robot.send_action(zero_action)
+
+            busy_wait(3)
+
+
+            # Initialize target positions as current positions (integers)
+
+
+            zero_poses = {
+            'arm_shoulder_pan': 0.0,
+            'arm_shoulder_lift': 0.0,
+            'arm_elbow_flex': 0.0,
+            'arm_wrist_flex': 0.0,
+            'arm_wrist_roll': 0.0,
+            'arm_gripper': 100.0
+            }
+            
+            # Initialize x,y coordinate control
+            # x0, y0 = 0.1629, 0.1131
+            r0, z0 = 0.1629, 0.1131
+            current_x, current_y = r0, z0
+            print(f"Initialize end effector position: x={current_x:.4f}, y={current_y:.4f}")
+            
+            
+            print("Keyboard control instructions:")
+            print("- Q/A: Joint 1 (arm_shoulder_pan) decrease/increase")
+            print("- W/S: Control end effector r coordinate (joint2+3)")
+            print("- E/D: Control end effector z coordinate (joint2+3)")
+            print("- R/F: Pitch adjustment increase/decrease (affects arm_wrist_flex)")
+            print("- T/G: Joint 5 (arm_wrist_roll) decrease/increase")
+            print("- Y/H: Joint 6 (arm_gripper) decrease/increase")
+            print("- X: Exit program (return to start position first)")
+            print("- ESC: Exit program")
+            print("="*50)
+            print("Note: Robot will continuously move to target positions")
+            
+            # Start P control loop
+            # third slot is the initial target positiosn for all the joints that aren't being controlled by inverse kinematics.
+            p_control_loop(robot, keyboard, zero_poses, start_positions, current_x, current_y, kp=0.5, control_freq=50)
+            
+            j2, j3 = inverse_kinematics(r0, z0)
+            print("Joint 2 angle:", j2)
+            print("Joint 3 angle:", j3)
+
+
+            # Disconnect
+            robot.disconnect()
+            keyboard.disconnect()
+            print("Program ended")
+            pass
+
+        except Exception as e:
+            print(f"Program execution failed: {e}")
+            traceback.print_exc()
+            print("Please check:")
+            print("1. Whether the robot is properly connected")
+            print("2. Whether the USB port is correct")
+            print("3. Whether you have sufficient permissions to access USB devices")
+            print("4. Whether the robot is properly configured")
+
+
+
+    if (mode == "zero"):
+
+        # move_to_zero_position(robot)
+
+        zero_action = {'arm_shoulder_pan.pos': 0.0, 'arm_shoulder_lift.pos': 0.0, 'arm_elbow_flex.pos': 0.0, 'arm_wrist_flex.pos': 0.0, 'arm_wrist_roll.pos': 0.0, 'arm_gripper.pos': 11.0, 'x.vel': 0.0, 'y.vel': 0.0, 'theta.vel': 0.0}
+        robot.send_action(zero_action)
+
+        busy_wait(3)
+
+        observation = robot.get_observation()
+
+        
+        print("Reading joint angles...")
         start_positions = {}
-        for key, value in start_obs.items():
+        for key, value in observation.items():
             if key.endswith('.pos'):
                 motor_name = key.removesuffix('.pos')
                 start_positions[motor_name] = int(value)  # Don't apply calibration coefficients
         
-        print("Initial joint angles:")
+        print("Joint angles:")
         for joint_name, position in start_positions.items():
-            print(f"  {joint_name}: {position}°")
-        
-        # Move to zero position
+            print(f"  {joint_name}: {position}°")   
 
-        # move_to_zero_position(robot)
-
-
-        # Initialize target positions as current positions (integers)
-        
-        # target_positions = {"arm_shoulder_pan": 0.0,
-        #             "arm_shoulder_lift": 0.0,
-        #             "arm_elbow_flex": 0.0,
-        #             "arm_wrist_flex": 0.0,
-        #             "arm_wrist_roll": 0.0,
-        #             "arm_gripper": 0.0}
-
-        # return_to_start_position(robot, target_positions, 0.5, control_freq=50)
-
-
-        # target_positions = {
-        # 'arm_shoulder_pan': 0.0,
-        # 'arm_shoulder_lift': 0.0,
-        # 'arm_elbow_flex': 0.0,
-        # 'arm_wrist_flex': 0.0,
-        # 'arm_wrist_roll': 0.0,
-        # 'arm_gripper': 0.0
-        #   }
-        
-        # Initialize x,y coordinate control
-        x0, y0 = 0.1629, 0.1131
-        current_x, current_y = x0, y0
-        print(f"Initialize end effector position: x={current_x:.4f}, y={current_y:.4f}")
-        
-        
-        print("Keyboard control instructions:")
-        print("- Q/A: Joint 1 (arm_shoulder_pan) decrease/increase")
-        print("- W/S: Control end effector x coordinate (joint2+3)")
-        print("- E/D: Control end effector y coordinate (joint2+3)")
-        print("- R/F: Pitch adjustment increase/decrease (affects arm_wrist_flex)")
-        print("- T/G: Joint 5 (arm_wrist_roll) decrease/increase")
-        print("- Y/H: Joint 6 (arm_gripper) decrease/increase")
-        print("- X: Exit program (return to start position first)")
-        print("- ESC: Exit program")
-        print("="*50)
-        print("Note: Robot will continuously move to target positions")
-        
-        # Start P control loop
-        # p_control_loop(robot, keyboard, target_positions, start_positions, current_x, current_y, kp=0.5, control_freq=50)
-        
-        print(inverse_kinematics(0.05, 0.05)) # want pos neg
-
-
-        # Disconnect
-        robot.disconnect()
-        keyboard.disconnect()
-        print("Program ended")
-        pass
-
-    except Exception as e:
-        print(f"Program execution failed: {e}")
-        traceback.print_exc()
-        print("Please check:")
-        print("1. Whether the robot is properly connected")
-        print("2. Whether the USB port is correct")
-        print("3. Whether you have sufficient permissions to access USB devices")
-        print("4. Whether the robot is properly configured")
+        return
 
 
 
-
+    if (mode == "print ctrl"):
     # set configuration control pritning out motor angles
-    # while True:
-    #     t0 = time.perf_counter()
+        while True:
+            t0 = time.perf_counter()
 
-    #     observation = robot.get_observation()
+            observation = robot.get_observation()
 
-        
-    #     print("Reading joint angles...")
-    #     start_positions = {}
-    #     for key, value in observation.items():
-    #         if key.endswith('.pos'):
-    #             motor_name = key.removesuffix('.pos')
-    #             start_positions[motor_name] = int(value)  # Don't apply calibration coefficients
-        
-    #     print("Joint angles:")
-    #     for joint_name, position in start_positions.items():
-    #         print(f"  {joint_name}: {position}°")
-
-
-
-    #     # new_pos = {"arm_shoulder_pan": ,
-    #     #             "arm_shoulder_lift": ,
-    #     #             "arm_elbow_flex": ,
-    #     #             "arm_wrist_flex": ,
-    #     #             "arm_wrist_roll": ,
-    #     #             "arm_gripper": }
-        
-    #     # resting_pos = {'arm_shoulder_pan': , 'arm_shoulder_lift': , 'arm_elbow_flex': , 'arm_wrist_flex': , 'arm_wrist_roll': , 'arm_gripper': }
-
-
-    #     # return_to_start_position(robot, new_pos, 0.5, control_freq=50)
-
-
-  
-
-    #     arm_action = leader_arm.get_action()
-    #     arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
-
-    #     keyboard_keys = keyboard.get_action()
-    #     base_action = robot._from_keyboard_to_base_action(keyboard_keys)
-
-    #     log_rerun_data(observation, {**arm_action, **base_action})
-
-    #     action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
-
-    #     robot.send_action(action)
-
-    #     busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+            
+            print("Reading joint angles...")
+            start_positions = {}
+            for key, value in observation.items():
+                if key.endswith('.pos'):
+                    motor_name = key.removesuffix('.pos')
+                    start_positions[motor_name] = int(value)  # Don't apply calibration coefficients
+            
+            print("Joint angles:")
+            for joint_name, position in start_positions.items():
+                print(f"  {joint_name}: {position}°")
 
 
 
+            # new_pos = {"arm_shoulder_pan": ,
+            #             "arm_shoulder_lift": ,
+            #             "arm_elbow_flex": ,
+            #             "arm_wrist_flex": ,
+            #             "arm_wrist_roll": ,
+            #             "arm_gripper": }
+            
+            # resting_pos = {'arm_shoulder_pan': , 'arm_shoulder_lift': , 'arm_elbow_flex': , 'arm_wrist_flex': , 'arm_wrist_roll': , 'arm_gripper': }
 
+
+            # return_to_start_position(robot, new_pos, 0.5, control_freq=50)
+
+
+    
+
+            arm_action = leader_arm.get_action()
+            arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+
+            keyboard_keys = keyboard.get_action()
+            base_action = robot._from_keyboard_to_base_action(keyboard_keys)
+
+            log_rerun_data(observation, {**arm_action, **base_action})
+
+            action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+
+            robot.send_action(action)
+
+            # busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+            busy_wait(1)
+
+
+
+
+    if (mode == "normal"):
     # default control via leader arm 
-    while True:
-        t0 = time.perf_counter()
+        while True:
+            t0 = time.perf_counter()
 
-        observation = robot.get_observation()
+            observation = robot.get_observation()
 
-        arm_action = leader_arm.get_action()
-        arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
+            arm_action = leader_arm.get_action()
+            arm_action = {f"arm_{k}": v for k, v in arm_action.items()}
 
-        keyboard_keys = keyboard.get_action()
-        base_action = robot._from_keyboard_to_base_action(keyboard_keys)
+            keyboard_keys = keyboard.get_action()
+            base_action = robot._from_keyboard_to_base_action(keyboard_keys)
 
-        log_rerun_data(observation, {**arm_action, **base_action})
+            log_rerun_data(observation, {**arm_action, **base_action})
 
-        action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
+            action = {**arm_action, **base_action} if len(base_action) > 0 else arm_action
 
-        robot.send_action(action)
+            # print(action)
 
-        busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+            robot.send_action(action)
+
+            # busy_wait(max(1.0 / FPS - (time.perf_counter() - t0), 0.0))
+            busy_wait(0.25)
 
 
 if (__name__ == "__main__"):
