@@ -306,7 +306,7 @@ def xyz_inverse_kinematics(robot: Robot, x, y, z, l1=0.1159, l2=0.1375, l3=0.175
 
 
 
-def xyzp_inverse_kinematics(robot: Robot, x, y, z, pitch, l1=0.1159, l2=0.1375, l3=0.175):
+def xyzp_inverse_kinematics(x0, y0, z0, pitch, l1=0.1159, l2=0.1375, l3=0.175):
     """
     Calculate inverse kinematics for a 2-link robotic arm, considering joint offsets
     
@@ -327,12 +327,14 @@ def xyzp_inverse_kinematics(robot: Robot, x, y, z, pitch, l1=0.1159, l2=0.1375, 
     # x, y, z = ee_to_wrist_frame(robot, x, y, z, l3)
     
     # start doing the inverse kinematics for joints 1-3
+
+    r = math.sqrt(x0**2 + y0**2)
     try:
-        res = nsolve([l1 * sin(x) + l2 * cos(x + y) + l3 * cos(pitch) - r, l1 * cos(x) - l2 * sin(x + y) + l3 * sin(pitch) - z], [x, y], [0, 0], prec=5)
+        res = nsolve([l1 * sin(x) + l2 * cos(x + y) + l3 * cos(pitch) - r, l1 * cos(x) - l2 * sin(x + y) + l3 * sin(pitch) - z0], [x, y], [0, 0], prec=5)
     except Exception:
         return (False, (0, 0, 0, 0))
 
-    joint1_deg = math.degrees(math.atan2(y, x))
+    joint1_deg = math.degrees(math.atan2(y0, x0))
     joint2_deg = math.degrees(res[0])
     joint3_deg = math.degrees(res[1])
     joint4_deg = -1 * (joint2_deg + joint3_deg + pitch)
@@ -709,8 +711,10 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
         control_freq: control frequency (Hz)
     """
     current_xyz = {"x" : xyz_start_pos[0], "y" : xyz_start_pos[1], "z" : xyz_start_pos[2]}
+    old_xyz = current_xyz
 
     control_period = 1.0 / control_freq
+    # control_period = 0.5
     
     # Initialize pitch control variables
     pitch = 0.0  # Initial pitch adjustment
@@ -722,6 +726,7 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
         try:
             # Get keyboard input
             keyboard_action = keyboard.get_action()
+            old_xyz = current_xyz
             
             if keyboard_action:
                 # Process keyboard input, update target positions
@@ -770,32 +775,32 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
                     
                     elif key in xyz_controls:
                         coord, delta = xyz_controls[key]
-
                         current_xyz[coord] += delta
-                        if (ik_check_in_bounds(robot, current_xyz['x'], current_xyz['y'], current_xyz['z'])):
-                            joint1_target, joint2_target, joint3_target = xyz_inverse_kinematics(robot, current_xyz['x'], current_xyz['y'], current_xyz['z'])
-                            target_positions['arm_shoulder_pan'] = joint1_target
-                            target_positions['arm_shoulder_lift'] = joint2_target
-                            target_positions['arm_elbow_flex'] = joint3_target
-                            # TODO: better print statement
-                            print(f"Update coordinates: {current_xyz['x']:.4f}, joint2={joint2_target:.3f}, joint3={joint3_target:.3f}")
-                        else:
-                            print("would leave range")
-                            # undo the change
-                            current_xyz[coord] -= delta
 
-            # Apply pitch adjustment to arm_wrist_flex
-            # Calculate arm_wrist_flex target position based on arm_shoulder_lift and arm_elbow_flex
-            if 'arm_shoulder_lift' in target_positions and 'arm_elbow_flex' in target_positions:
-                target_positions['arm_wrist_flex'] = - target_positions['arm_shoulder_lift'] - target_positions['arm_elbow_flex'] + pitch
-                # Show current pitch value (display every 100 steps to avoid screen flooding)
-                if hasattr(p_control_loop, 'step_counter'):
-                    p_control_loop.step_counter += 1
+                # only run ik once per cycle
+                ik_result = xyzp_inverse_kinematics(current_xyz['x'], current_xyz['y'], current_xyz['z'], pitch)
+                if (ik_result[0]):
+                    # found a solution, update joints
+                    target_positions['arm_shoulder_pan'] = ik_result[1][0]
+                    target_positions['arm_shoulder_lift'] = ik_result[1][1]
+                    target_positions['arm_elbow_flex'] = ik_result[1][2]
+                    target_positions['arm_wrist_flex'] = ik_result[1][3]
                 else:
-                    p_control_loop.step_counter = 0
+                    print("Would leave range")
+                    current_xyz = old_xyz # revert changes made this cycle
+
+            # # Apply pitch adjustment to arm_wrist_flex
+            # # Calculate arm_wrist_flex target position based on arm_shoulder_lift and arm_elbow_flex
+            # if 'arm_shoulder_lift' in target_positions and 'arm_elbow_flex' in target_positions:
+            #     target_positions['arm_wrist_flex'] = - target_positions['arm_shoulder_lift'] - target_positions['arm_elbow_flex'] + pitch
+            #     # Show current pitch value (display every 100 steps to avoid screen flooding)
+            #     if hasattr(p_control_loop, 'step_counter'):
+            #         p_control_loop.step_counter += 1
+            #     else:
+            #         p_control_loop.step_counter = 0
                 
-                if p_control_loop.step_counter % 100 == 0:
-                    print(f"Current pitch adjustment: {pitch:.3f}, arm_wrist_flex target: {target_positions['arm_wrist_flex']:.3f}")
+            #     if p_control_loop.step_counter % 100 == 0:
+            #         print(f"Current pitch adjustment: {pitch:.3f}, arm_wrist_flex target: {target_positions['arm_wrist_flex']:.3f}")
             
             # Get current robot state
             current_obs = robot.get_observation()
@@ -829,7 +834,7 @@ def p_control_loop_2(robot: Robot, keyboard: KeyboardTeleop, target_positions, s
                 robot_action["y.vel"] = 0.0
                 robot_action["theta.vel"] = 0.0
 
-                # print("was going to send action", robot_action)
+                print("was going to send action", robot_action)
                 robot.send_action(robot_action)
             
             time.sleep(control_period)
@@ -950,7 +955,7 @@ def main():
             
             # Start P control loop
             # third slot is the initial target positiosn for all the joints that aren't being controlled by inverse kinematics.
-            # p_control_loop_2(robot, keyboard, zero_poses, start_positions, (r0, 0, z0), kp=0.5, control_freq=50)
+            p_control_loop_2(robot, keyboard, zero_poses, start_positions, (x0, y0, z0), kp=0.5, control_freq=50)
             
             # r0, z0 = 0.15, 0.1159 
 
@@ -964,7 +969,10 @@ def main():
             # expect 0, 0
 
             # x0, y0, z0 = 0.1375, 0.0, 0.1159
-            print(xyz_inverse_kinematics(robot, x0, y0, z0))
+            # print(xyz_inverse_kinematics(robot, x0, y0, z0))
+
+
+            # print(xyzp_inverse_kinematics(0.25, 0, 0.11, 0))
 
 
             # Disconnect
