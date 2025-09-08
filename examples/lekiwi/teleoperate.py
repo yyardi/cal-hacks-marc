@@ -7,7 +7,7 @@ Developed by SIGRobotics UIUC
 
 Current issues:
  - The SO101 arm's send_action() command does not produce enough torque to overcome the arm's gravity.
-    This results in the arm being tilted slightly farther down than it should be when sticking out. Given that this will, at least intially,
+    This results in the arm being tilted slightly farther down than it should be when sticking out. Given that this will, at least initially,
     be used for human keyboard control (and a human can react to this), we are not fixing this issue before release.
  - The x, y, z, and pitch desired positions can advance slightly beyond what the robot is physically capable of reaching.
     This can create situations where the (x, y, z, pitch) combination goes out of bounds and then comes back in bounds somewhere else,
@@ -124,7 +124,7 @@ def IK_control_loop(robot: Robot, keyboard: KeyboardTeleop, target_positions, xy
     Args:
         robot: robot instance
         keyboard: keyboard instance
-        target_positions: intial target positions for joints not controlled by inverse kinematics (gripper and wrist roll)
+        target_positions: initial target positions for joints not controlled by inverse kinematics (gripper and wrist roll)
         xyzp_start_pos: a tuple containing:
             current_x: current x coordinate (distance "forward" from the base of the robot),
             current_y: current y coordinate (left/right distance, left from the robot's perspective is positive),
@@ -316,10 +316,9 @@ def main():
         print("- A/D: Y coordinate change (left/right)")
         print("- Q/E: Z coordinate change (up/down)")
         print("- R/F: Pitch adjustment increase/decrease (affects arm_wrist_flex)")
-        print("- T/G: Joint 5 (arm_wrist_roll) decrease/increase")
-        print("- Y/H: Joint 6 (arm_gripper) decrease/increase")
+        print("- Y/H: Joint 5 (arm_wrist_roll) increase/decrease")
+        print("- T/G: Joint 6 (arm_gripper) increase/decrease")
         print("- X: Exit program (return to start position first)")
-        print("- ESC: Exit program")
         print("="*50)
         print("Note: Robot will continuously move to target positions")
         
