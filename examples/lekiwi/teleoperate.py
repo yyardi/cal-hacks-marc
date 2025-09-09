@@ -285,30 +285,25 @@ def main():
     # IK control code start 
     try:
         
-        # Move to zero position
-        # I have to hack the zero position a bit for the robot to overcome its own gravity and actually come to rest at zero (after send action, and of course this is not consistent)
-        zero_action = {'arm_shoulder_pan.pos': 0.0, 'arm_shoulder_lift.pos': -2.0, 'arm_elbow_flex.pos': -5.0, 'arm_wrist_flex.pos': 0.0, 'arm_wrist_roll.pos': 0.0, 'arm_gripper.pos': 11.0, 'x.vel': 0.0, 'y.vel': 0.0, 'theta.vel': 0.0}
-        robot.send_action(zero_action)
+        init_xyzp = (0.2, 0.0, 0.1, 0.0) # calling xyzp on this position gives the initial angles below.
+        init_angles = (0.0, -75.83, 44.43, 31.39)
+        init_action = {'arm_shoulder_pan.pos': init_angles[0], 'arm_shoulder_lift.pos': init_angles[1], 'arm_elbow_flex.pos': init_angles[2], 'arm_wrist_flex.pos': init_angles[3], 'arm_wrist_roll.pos': 0.0, 'arm_gripper.pos': 0.0, 'x.vel': 0.0, 'y.vel': 0.0, 'theta.vel': 0.0}
+        # to be passed to the control loop.
+        init_action_no_pos = {'arm_shoulder_pan': init_angles[0], 'arm_shoulder_lift': init_angles[1], 'arm_elbow_flex': init_angles[2], 'arm_wrist_flex': init_angles[3], 'arm_wrist_roll': 0.0, 'arm_gripper': 0.0}
+
+
+        # Move to an initial position that should not make the kiwi fall over.
+        robot.send_action(init_action)
         busy_wait(3)
 
 
-        zero_poses = {
-        'arm_shoulder_pan': 0.0,
-        'arm_shoulder_lift': 0.0,
-        'arm_elbow_flex': 0.0,
-        'arm_wrist_flex': 0.0,
-        'arm_wrist_roll': 0.0,
-        'arm_gripper': 0.0
-        }
-        
-        # Initialize x,y coordinate control
-        shoulder_to_elbow_len = 0.1159
-        elbow_to_wrist_len = 0.1375
-        wrist_to_ee_len = 0.195
+        # For reference:
+        # shoulder_to_elbow_len = 0.1159
+        # elbow_to_wrist_len = 0.1375
+        # wrist_to_ee_len = 0.195
 
         # coordinates for the zero position (which the robot starts at)
-        x0, y0, z0 = elbow_to_wrist_len + wrist_to_ee_len, 0.0, shoulder_to_elbow_len
-        print(f"Initialize end effector position: x={x0:.4f}, y={y0:.4f}, z={z0:.4f}")
+        print(f"Initialize end effector position: x={init_xyzp[0]:.4f}, y={init_xyzp[1]:.4f}, z={init_xyzp[2]:.4f}, pitch={init_xyzp[3]:.4f}")
         
         
         print("Keyboard control instructions:")
@@ -323,7 +318,7 @@ def main():
         print("Note: Robot will continuously move to target positions")
         
         # Start
-        IK_control_loop(robot, keyboard, zero_poses, (x0, y0, z0, 0), control_freq=50)
+        IK_control_loop(robot, keyboard, init_action_no_pos, init_xyzp, control_freq=50)
 
     except Exception as e:
         print(f"Program execution failed: {e}")
