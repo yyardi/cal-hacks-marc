@@ -30,7 +30,7 @@ from sympy import cos, sin, nsolve
 from sympy.abc import x, y
 
 
-def xyzp_inverse_kinematics(robot: Robot, x0, y0, z0, pitch_rad, l1=0.1159, l2=0.1375, l3=0.195):
+def xyzp_inverse_kinematics(robot: Robot, x0, y0, z0, pitch_rad, l1=0.1159, l2=0.1375, l3=0.17):
     """
     Calculate inverse kinematics for a 2-link robotic arm, considering joint offsets
     
@@ -41,7 +41,7 @@ def xyzp_inverse_kinematics(robot: Robot, x0, y0, z0, pitch_rad, l1=0.1159, l2=0
         pitch_rad: the desired pitch in the world frame in radians.
         l1: Upper arm length (default 0.1159 m)
         l2: Lower arm length (default 0.1375 m)
-        l3: Wrist joint to end effector tip/control point length (default 0.195 m)
+        l3: Wrist joint to end effector tip/control point length (default 0.17 m)
         
     Returns:
         ((success/fail, (joint1, joint2, joint3, joint4)): Joint angles in degrees as defined in the URDF file
@@ -59,7 +59,7 @@ def xyzp_inverse_kinematics(robot: Robot, x0, y0, z0, pitch_rad, l1=0.1159, l2=0
     except Exception:
         return (False, (0, 0, 0, 0))
 
-    joint1_deg = math.degrees(math.atan2(y0, x0))
+    joint1_deg = math.degrees(math.atan2(y0, x0)) # 0.035 = distance from joint 1 to joint 2 in x
     joint2_deg = math.degrees(res[0])
     joint3_deg = math.degrees(res[1])
     joint4_deg = -1 * (joint2_deg + joint3_deg + (pitch_rad * 180 / math.pi))
@@ -142,7 +142,9 @@ def IK_control_loop(robot: Robot, keyboard: KeyboardTeleop, target_positions, xy
     pitch_deg_per_sec = 50 # pitch moves at 20 degrees per second (assuming cycles are instant, which they aren't)
     xyz_L1_m_per_sec = 0.2 # speed per direction
 
-    print(f"Starting P control loop, control frequency: {control_freq}Hz")
+    xyzp_initial = xyzp_start_pos
+
+    print(f"Starting control loop, control frequency: {control_freq}Hz")
     
     while True:
         try:
@@ -156,9 +158,12 @@ def IK_control_loop(robot: Robot, keyboard: KeyboardTeleop, target_positions, xy
                 changed_xyzp = False
                 for key in keyboard_action.keys():
                     if key == 'x':
-                        print("Exit command detected, returning to zero position...")
-                        move_to_zero_position(robot)
-                        return
+                        print("Returning to start position")
+                        current_xyz['x'] = xyzp_initial[0]
+                        current_xyz['y'] = xyzp_initial[1]
+                        current_xyz['z'] = xyzp_initial[2]
+                        pitch = xyzp_initial[3]
+                        changed_xyzp = True
                     
                     # Joint control mapping
                     joint_controls = {
@@ -207,12 +212,13 @@ def IK_control_loop(robot: Robot, keyboard: KeyboardTeleop, target_positions, xy
                         target_positions['arm_shoulder_lift'] = ik_result[1][1]
                         target_positions['arm_elbow_flex'] = ik_result[1][2]
                         target_positions['arm_wrist_flex'] = ik_result[1][3]
-
+            
             # Create robot action
             robot_action = {}
             for joint_name, target_pos in target_positions.items():
                 target_pos = target_positions[joint_name]
                 robot_action[f"{joint_name}.pos"] = target_pos
+            
             
             # Send action to robot
             if robot_action:
@@ -285,7 +291,8 @@ def main():
     # IK control code start 
     try:
         
-        init_xyzp = (0.2, 0.0, 0.1, 0.0) # calling xyzp on this position gives the initial angles below.
+        # A safe configuration to start in (motor angles and xyz + pitch)
+        init_xyzp = (0.175, 0.0, 0.1, 0.0) # calling xyzp on this position gives the initial angles below.
         init_angles = (0.0, -75.83, 44.43, 31.39)
         init_action = {'arm_shoulder_pan.pos': init_angles[0], 'arm_shoulder_lift.pos': init_angles[1], 'arm_elbow_flex.pos': init_angles[2], 'arm_wrist_flex.pos': init_angles[3], 'arm_wrist_roll.pos': 0.0, 'arm_gripper.pos': 0.0, 'x.vel': 0.0, 'y.vel': 0.0, 'theta.vel': 0.0}
         # to be passed to the control loop.
@@ -300,7 +307,7 @@ def main():
         # For reference:
         # shoulder_to_elbow_len = 0.1159
         # elbow_to_wrist_len = 0.1375
-        # wrist_to_ee_len = 0.195
+        # wrist_to_ee_len = 0.17
 
         # coordinates for the zero position (which the robot starts at)
         print(f"Initialize end effector position: x={init_xyzp[0]:.4f}, y={init_xyzp[1]:.4f}, z={init_xyzp[2]:.4f}, pitch={init_xyzp[3]:.4f}")
@@ -313,7 +320,7 @@ def main():
         print("- R/F: Pitch adjustment increase/decrease (affects arm_wrist_flex)")
         print("- Y/H: Joint 5 (arm_wrist_roll) increase/decrease")
         print("- T/G: Joint 6 (arm_gripper) increase/decrease")
-        print("- X: Exit program (return to start position first)")
+        print("- X: Return to the start position (program will continue)")
         print("="*50)
         print("Note: Robot will continuously move to target positions")
         
