@@ -5,6 +5,38 @@ https://xlerobot.readthedocs.io/en/latest/software/index.html#keyboard-end-effec
 Developed by SIGRobotics UIUC
 (this is by no means perfect)
 
+I am primarly pushing this so some other members of the club can use this code. It should not be 
+fully integrated into LeRobot in this form. 
+
+Important Notes:
+ - In the configuration file for the LeKiwi you need to set “use_degrees = True”. Otherwise,
+the kiwi will report joint values as a linearly interpolated scalar between -100 and 100,
+where the limits are the minimum and maximum angles defined in calibration. Aka, if
+use_degrees is not true, the inverse kinematics will be calibration-dependent.
+    ○ The degrees angle reporting still relies on the midpoint set in calibration (where
+you hold the robot in its “zero” position), so doing this accurately is important.
+    ○ In degrees control, the minimum and maximum set during calibration still serve
+as limits on the kiwi’s range of motion; you can’t rotate past the
+maximum/minimum set in calibration.
+ - The inverse kinematics are solved numerically. This does have some tangible (though not
+too severe, I hope) impacts on performance. I have in no way optimized the performance of the 
+numerical solver.
+ - The minimum z value in xyz_ranges is not set correctly because this was developed on arm
+ that was detached from its LeKiwi. 
+
+Controls:
+  ● Forward/Backward (x coordinate) = W/S
+  ● Left/Right (from the robot’s perspective; y coordinate) = A/D
+  ● Up/Down = Q/E
+Additional Controls:
+  ● Pitch up/down = R/F
+    ○ Pitch in the global frame is maintained once set. So, if you are doing a task where
+the angle of the gripper with respect to the ground does not need to change, you
+can set the pitch once and forget about it.
+  ● Wrist roll = Y/H
+  ● Gripper = G/T
+
+
 Current issues:
  - The SO101 arm's send_action() command does not produce enough torque to overcome the arm's gravity.
     This results in the arm being tilted slightly farther down than it should be when sticking out. Given that this will, at least initially,
