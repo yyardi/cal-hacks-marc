@@ -54,7 +54,7 @@ can set the pitch once and forget about it.
 
 
 Current issues:
- - The SO101 arm's send_action() command does not produce enough torque to overcome the arm's gravity.
+ - The SO100 arm's send_action() command does not produce enough torque to overcome the arm's gravity.
     This results in the arm being tilted slightly farther down than it should be when sticking out. Given that this will, at least initially,
     be used for human keyboard control (and a human can react to this), we are not fixing this issue before release.
  - The x, y, z, and pitch desired positions can advance slightly beyond what the robot is physically capable of reaching.
@@ -65,11 +65,12 @@ Current issues:
 
 import time
 
-from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
+from lerobot.robots.so100_follower import SO100Follower, SO100FollowerConfig
+# from lerobot.robots.lekiwi import LeKiwiClient, LeKiwiClientConfig
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
 from lerobot.utils.robot_utils import busy_wait
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+from lerobot.utils.visualization_utils import init_rerun
 
 from lerobot.robots import Robot
 
@@ -100,8 +101,8 @@ def xyzp_inverse_kinematics(robot: Robot, x0, y0, z0, pitch_rad, l1=0.1159, l2=0
 
     # Use the current angles for the 2nd and 3rd joints for the numerical solver's starting location. 
     curr_obs = read_angles(robot)
-    curr_t2 = curr_obs["arm_shoulder_pan"] * math.pi / 180
-    curr_t3 = curr_obs["arm_elbow_flex"] * math.pi / 180
+    curr_t2 = curr_obs["shoulder_pan"] * math.pi / 180
+    curr_t3 = curr_obs["elbow_flex"] * math.pi / 180
 
 
     r = math.sqrt(x0**2 + y0**2)
@@ -138,7 +139,7 @@ def move_to_zero_position(robot, duration=3.0):
         duration: time to move to zero position (seconds)
     """
     
-    zero_position = {'arm_shoulder_pan': 0.0, 'arm_shoulder_lift': 0.0, 'arm_elbow_flex': 0.0, 'arm_wrist_flex': 0.0, 'arm_wrist_roll': 0.0, 'arm_gripper': 0.0}
+    zero_position = {'shoulder_pan': 0.0, 'shoulder_lift': 0.0, 'elbow_flex': 0.0, 'wrist_flex': 0.0, 'wrist_roll': 0.0, 'gripper': 0.0}
     move_to_position(robot, zero_position, duration)
 
 
@@ -218,10 +219,10 @@ def IK_control_loop(robot: Robot, keyboard: KeyboardTeleop, target_positions, xy
                     
                     # Joint control mapping
                     joint_controls = {
-                        'y': ('arm_wrist_roll', -100 * control_period),      # Joint 5 decrease
-                        'h': ('arm_wrist_roll', 100 * control_period),       # Joint 5 increase
-                        'g': ('arm_gripper', -100 * control_period),         # Joint 6 decrease
-                        't': ('arm_gripper', 100 * control_period),          # Joint 6 increase
+                        'y': ('wrist_roll', -100 * control_period),      # Joint 5 decrease
+                        'h': ('wrist_roll', 100 * control_period),       # Joint 5 increase
+                        'g': ('gripper', -100 * control_period),         # Joint 6 decrease
+                        't': ('gripper', 100 * control_period),          # Joint 6 increase
                     }
                     
                     # xyz coordinate control
@@ -259,10 +260,10 @@ def IK_control_loop(robot: Robot, keyboard: KeyboardTeleop, target_positions, xy
                     ik_result = xyzp_inverse_kinematics(robot, current_xyz['x'], current_xyz['y'], current_xyz['z'], pitch)
                     if (ik_result[0]):
                         # found a solution, update joints
-                        target_positions['arm_shoulder_pan'] = ik_result[1][0]
-                        target_positions['arm_shoulder_lift'] = ik_result[1][1]
-                        target_positions['arm_elbow_flex'] = ik_result[1][2]
-                        target_positions['arm_wrist_flex'] = ik_result[1][3]
+                        target_positions['shoulder_pan'] = ik_result[1][0]
+                        target_positions['shoulder_lift'] = ik_result[1][1]
+                        target_positions['elbow_flex'] = ik_result[1][2]
+                        target_positions['wrist_flex'] = ik_result[1][3]
             
             # Create robot action
             robot_action = {}
@@ -273,11 +274,6 @@ def IK_control_loop(robot: Robot, keyboard: KeyboardTeleop, target_positions, xy
             
             # Send action to robot
             if robot_action:
-                # required for LeKiwi
-                robot_action["x.vel"] = 0.0
-                robot_action["y.vel"] = 0.0
-                robot_action["theta.vel"] = 0.0
-
                 print("x:", round(current_xyz['x'], 3), "y:", round(current_xyz['y'], 3), "z:", round(current_xyz['z'], 3), "Pitch (deg):", pitch * 180 / math.pi)
                 robot.send_action(robot_action)
             
@@ -295,6 +291,9 @@ def IK_control_loop(robot: Robot, keyboard: KeyboardTeleop, target_positions, xy
 def read_angles(robot: Robot):
     # Read initial joint angles
     start_obs = robot.get_observation()
+
+    print(start_obs)
+
     start_positions = {}
     for key, value in start_obs.items():
         if key.endswith('.pos'):
@@ -320,22 +319,22 @@ def read_and_print_angles(robot: Robot):
 def main():
 
     # Create the robot and teleoperator configurations
-    robot_config = LeKiwiClientConfig(remote_ip="192.168.0.133", id="my_lekiwi2")
-    teleop_arm_config = SO100LeaderConfig(port="COM5", id="my_awesome_leader_arm")
+    robot_config = SO100FollowerConfig(port="COM6", id="frida_bot", use_degrees=True) # use_degrees=True is very important
+    # teleop_arm_config = SO100LeaderConfig(port="COM6", id="my_awesome_leader_arm")
     keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
-    robot = LeKiwiClient(robot_config)
-    leader_arm = SO100Leader(teleop_arm_config)
+    robot = SO100Follower(robot_config)
+    # leader_arm = SO100Leader(teleop_arm_config)
     keyboard = KeyboardTeleop(keyboard_config)
 
     # To connect you already should have this script running on LeKiwi: `python -m lerobot.robots.lekiwi.lekiwi_host --robot.id=my_awesome_kiwi`
     robot.connect()
-    leader_arm.connect()
+    # leader_arm.connect()
     keyboard.connect()
 
-    _init_rerun(session_name="lekiwi_teleop")
+    init_rerun(session_name="so100_ik")
 
-    if not robot.is_connected or not leader_arm.is_connected or not keyboard.is_connected:
+    if not robot.is_connected or  not keyboard.is_connected: # or not leader_arm.is_connected:
         raise ValueError("Robot, leader arm of keyboard is not connected!")
 
 
@@ -345,9 +344,9 @@ def main():
         # A safe configuration to start in (motor angles and xyz + pitch)
         init_xyzp = (0.175, 0.0, 0.1, 0.0) # calling xyzp on this position gives the initial angles below.
         init_angles = (0.0, -75.83, 44.43, 31.39)
-        init_action = {'arm_shoulder_pan.pos': init_angles[0], 'arm_shoulder_lift.pos': init_angles[1], 'arm_elbow_flex.pos': init_angles[2], 'arm_wrist_flex.pos': init_angles[3], 'arm_wrist_roll.pos': 0.0, 'arm_gripper.pos': 0.0, 'x.vel': 0.0, 'y.vel': 0.0, 'theta.vel': 0.0}
+        init_action = {'shoulder_pan.pos': init_angles[0], 'shoulder_lift.pos': init_angles[1], 'elbow_flex.pos': init_angles[2], 'wrist_flex.pos': init_angles[3], 'wrist_roll.pos': 0.0, 'gripper.pos': 0.0}
         # to be passed to the control loop.
-        init_action_no_pos = {'arm_shoulder_pan': init_angles[0], 'arm_shoulder_lift': init_angles[1], 'arm_elbow_flex': init_angles[2], 'arm_wrist_flex': init_angles[3], 'arm_wrist_roll': 0.0, 'arm_gripper': 0.0}
+        init_action_no_pos = {'shoulder_pan': init_angles[0], 'shoulder_lift': init_angles[1], 'elbow_flex': init_angles[2], 'wrist_flex': init_angles[3], 'wrist_roll': 0.0, 'gripper': 0.0}
 
 
         # Move to an initial position that should not make the kiwi fall over.
@@ -368,9 +367,9 @@ def main():
         print("- W/S: X coordinate (forward/backward)")
         print("- A/D: Y coordinate change (left/right)")
         print("- Q/E: Z coordinate change (up/down)")
-        print("- R/F: Pitch adjustment increase/decrease (affects arm_wrist_flex)")
-        print("- Y/H: Joint 5 (arm_wrist_roll) increase/decrease")
-        print("- T/G: Joint 6 (arm_gripper) increase/decrease")
+        print("- R/F: Pitch adjustment increase/decrease (affects wrist_flex)")
+        print("- Y/H: Joint 5 (wrist_roll) increase/decrease")
+        print("- T/G: Joint 6 (gripper) increase/decrease")
         print("- X: Return to the start position (program will continue)")
         print("="*50)
         print("Note: Robot will continuously move to target positions")
