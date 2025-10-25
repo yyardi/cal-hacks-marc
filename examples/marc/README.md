@@ -32,6 +32,8 @@ out/         # artefacts (PNG, SVG, plans, calibration files) - gitignored
    pip install -e .
    pip install -r examples/marc/requirements.txt
    ```
+   The defaults limit travel to 4 cm/s and drawing moves to 2 cm/s to keep the IK solve stable.
+   Start with a single colour in your plan; multi-colour grouping comes later.
 
 3. **Install PyTorch** — follow the command suggested at <https://pytorch.org/get-started/locally/>
    for your OS, Python version, and GPU/CPU.
