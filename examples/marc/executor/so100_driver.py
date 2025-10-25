@@ -79,15 +79,7 @@ class DriverState:
 
 
 class SO100Driver:
-    """High-level interface for streaming poses to the SO100 follower arm."""
-
-    motor_names: tuple[str, ...] = (
-        "shoulder_pan",
-        "shoulder_lift",
-        "elbow_flex",
-        "wrist_flex",
-        "wrist_roll",
-    )
+    """High-level interface for streaming poses to the SO100/SO101 follower arm."""
 
     def __init__(
         self,
@@ -98,6 +90,8 @@ class SO100Driver:
         page_size: Sequence[float],
         executor_cfg: ExecutorConfig | None = None,
         base_pose: Sequence[float] = (0.0, 0.0, 0.0),
+        target_frame_name: str = "gripper_frame_link",
+        camera_homography_path: str | Path | None = None,
     ) -> None:
         self.cfg = executor_cfg or ExecutorConfig()
         self.page_size = np.array(page_size, dtype=float)
@@ -105,10 +99,18 @@ class SO100Driver:
             raise ValueError("page_size must contain exactly two floats: width and height")
 
         self.port = port
-        self.homography = load_homography(homography_path)
+        self.page_to_robot_h = load_homography(homography_path)
+        self.camera_to_page_h = (
+            load_homography(camera_homography_path) if camera_homography_path else None
+        )
         self.robot_cfg = SO100FollowerConfig(port=port, use_degrees=True)
         self.robot = SO100Follower(self.robot_cfg)
-        self.kinematics = RobotKinematics(str(urdf_path), joint_names=list(self.motor_names))
+        self.motor_names: tuple[str, ...] = tuple(self.robot.bus.motors.keys())
+        self.kinematics = RobotKinematics(
+            str(urdf_path),
+            target_frame_name=target_frame_name,
+            joint_names=list(self.motor_names),
+        )
         self.state = DriverState()
         self.dt = 1.0 / float(self.cfg.command_rate_hz)
         self.base_pose = np.array(base_pose, dtype=float)
@@ -220,7 +222,7 @@ class SO100Driver:
 
     def _page_to_pose(self, x: float, y: float, z: float | None) -> np.ndarray:
         page_point = np.array([x, y, 1.0], dtype=float)
-        robot_xy_h = self.homography @ page_point
+        robot_xy_h = self.page_to_robot_h @ page_point
         robot_xy = robot_xy_h[:2] / robot_xy_h[2]
         pose = np.eye(4, dtype=float)
         orientation = _rotation_matrix_from_euler(
@@ -261,7 +263,16 @@ class SO100Driver:
             if self.state.joint_state is not None
             else np.zeros(len(self.motor_names), dtype=float)
         )
-        solution = self.kinematics.inverse_kinematics(current, pose, position_weight=1.0, orientation_weight=0.01)
+        try:
+            solution = self.kinematics.inverse_kinematics(
+                current,
+                pose,
+                position_weight=1.0,
+                orientation_weight=0.01,
+            )
+        except Exception as exc:  # pragma: no cover - defensive logging for field debugging
+            logger.error("Inverse kinematics failed: %s", exc)
+            raise
         self.state.joint_state = solution
         action = {f"{name}.pos": float(val) for name, val in zip(self.motor_names, solution)}
         action["gripper.pos"] = 0.0
@@ -297,7 +308,14 @@ class SO100Driver:
             return
 
         captured = self.capture_page_image()
-        warped = cv2.warpPerspective(captured, self.homography, homography_resolution)
+        if self.camera_to_page_h is None:
+            logger.warning(
+                "Camera homography not provided; skipping correction pass. "
+                "Re-run with --camera-homography if you need closed-loop drawing."
+            )
+            return
+
+        warped = cv2.warpPerspective(captured, self.camera_to_page_h, homography_resolution)
         target_gray = _to_gray(target_raster)
         warped_gray = _to_gray(warped)
         target_norm = target_gray.astype(float) / 255.0
