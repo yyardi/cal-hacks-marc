@@ -1,102 +1,215 @@
-# MARC drawing executor
+# MARC — Marker-Actuated Robotic Controller
 
-This directory contains utilities to reproduce the MARC drawing demos with a
-[Lerobot SO-100 follower](https://github.com/huggingface/lerobot). The workflow
-converts page-space strokes into end-effector poses solved through inverse
-kinematics and streams them to the physical arm.
+Prompt → PNG (Diffusers) → SVG (Potrace) → stroke plan → SO101 draw pass.
 
-## 1. Prerequisites
+Everything inside `examples/marc/` is wired for the Lerobot SO-100/SO-101 follower with low-speed
+IK, matching the joint ordering used by `teleoperate.py`. The defaults focus on a single marker so we
+can get reliable drawings first before layering colour swaps.
 
-1. Install the Python dependencies for the project and the optional kinematics
-   extras (placo + OpenCV):
-   ```bash
-   pip install -e .[kinematics]
-   pip install opencv-python pillow
-   ```
-2. Download the SO-100 URDF from [TheRobotStudio/SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100)
-   (recommended file: `Simulation/SO101/so101_new_calib.urdf`).
-3. Ensure the SO-100 follower firmware is on the latest release and that you
-   know the serial port that exposes the motor bus (for example `/dev/tty.usbmodemXXXX`).
-4. Prepare a JSON stroke plan and a page-to-robot homography (see below).
+## Repo layout
 
-## 2. Calibration and homography
-
-1. Calibrate the follower using the utilities that ship with Lerobot, or allow
-   the executor to run `--calibrate` on the first connection (this prompts for
-   manual alignment).
-2. Create a homography that maps points in page coordinates *(x, y in meters)*
-   to the robot workspace. Store the 3×3 matrix as either `homography.npy`,
-   an `.npz` file with a `homography` entry, or a JSON file with a
-   `{"homography": [[...]]}` payload. The same file is consumed both for
-   execution and for the optional correction stage.
-3. (Optional) Measure the marker rack slots and store them in
-   `marker_config.json`. Example:
-   ```json
-   {
-     "black": {"pick": [0.18, -0.12], "return": [0.18, -0.12], "z": -0.015},
-     "magenta": {"pick": [0.24, -0.12]}
-   }
-   ```
-
-## 3. Stroke plan format
-
-The executor consumes a JSON file that declares the page size and the strokes
-for each colour. A minimal example:
-
-```json
-{
-  "page": {"width": 0.210, "height": 0.297},
-  "colors": [
-    {
-      "name": "black",
-      "strokes": [
-        [[0.02, 0.02], [0.05, 0.02], [0.05, 0.05]],
-        [[0.06, 0.04], [0.10, 0.04]]
-      ],
-      "raster": "artifacts/black.png"
-    }
-  ]
-}
+```
+vectorize/   # diffusion prompt->PNG + Potrace wrapper + SVG simplifier
+planner/     # sample SVGs into ordered polylines and export JSON plans
+calib/       # AprilTag/square detection, homographies, and jog-to-robot alignment
+executor/    # driver API, IK streaming adapter for the SO101
+run_svg.py   # prompt -> PNG + SVG helper
+run_draw_lerobot_ik.py  # execute a JSON plan on the arm
+out/         # artefacts (PNG, SVG, plans, calibration files) - gitignored
 ```
 
-Each stroke is an ordered list of page coordinates in metres. The optional
-`raster` points to a reference image used during correction.
+## 1. Environment setup (run once per machine)
 
-## 4. Running a drawing session
+1. **Create a virtual environment and upgrade pip**
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   python -m pip install --upgrade pip
+   ```
 
-1. Place the page, align the camera, and insert a marker that matches the first
-   colour in the plan into the gripper.
-2. Execute the CLI:
+2. **Install lerobot and project requirements**
+   ```bash
+   pip install -e .
+   pip install -r examples/marc/requirements.txt
+   ```
+
+3. **Install PyTorch** — follow the command suggested at <https://pytorch.org/get-started/locally/>
+   for your OS, Python version, and GPU/CPU.
+
+4. **Install Potrace**
+   - macOS: `brew install potrace`
+   - Windows: download the official ZIP, extract (e.g. `C:\Potrace`), add that folder to `PATH`,
+     open a new PowerShell, and run `potrace --version` to confirm.
+
+5. **Authenticate with Hugging Face** so Diffusers can download SDXL/SD 1.5 weights.
+   ```bash
+   export HF_TOKEN=hf_xxx_read_token  # or run `huggingface-cli login`
+   ```
+
+6. **Grab the SO101 URDF** that ships with the arm (`Simulation/SO101/so101_new_calib.urdf`) and keep
+   track of whichever serial port appears when you plug the follower in (`/dev/tty.usbmodem*` on macOS
+   and Linux). You will pass the port on the CLI; no source edits are required when it changes.
+
+## 2. One-shot command sequence (prompt → draw)
+
+Run these commands sequentially every time you want a new drawing. Replace `<slug>` with the basename
+printed by `run_svg` and fill in the port/paths that match your setup.
+
+1. **Generate raster + SVG**
+   ```bash
+   python -m examples.marc.run_svg \
+     "minimal line-art cat, black outline" \
+     --output-dir examples/marc/out \
+     --width 768 --height 768
+   ```
+   Outputs `examples/marc/out/<slug>.png`, `<slug>.svg`, and `<slug>-simplified.svg`.
+
+2. **Convert SVG to a single-colour stroke plan** (dimensions in millimetres)
+   ```bash
+   python -m examples.marc.planner.make_plan \
+     examples/marc/out/<slug>-simplified.svg \
+     --output examples/marc/out/<slug>_plan.json \
+     --page-width 215.9 --page-height 279.4 --unit mm
+   ```
+   The resulting JSON stores the page size in metres and an ordered list of strokes. Keep the default
+   palette alone for now so the executor streams everything with one marker.
+
+3. **(Optional) Capture an overhead photo for the camera homography**
+   *If you do not have a fixed camera yet, skip this step and leave out `--camera-homography` when
+   drawing.*
+   ```bash
+   python -m examples.marc.calib.estimate_homography \
+     /path/to/overhead_photo.png \
+    --output examples/marc/out/page_homography.npz \
+    --overlay examples/marc/out/homography_debug.png
+  ```
+  Tips:
+   - Tape four high-contrast black squares to the page corners (the detector locks on those by
+     default, AprilTags remain an optional fallback).
+   - Take the photo straight down with the final camera, lock exposure/white balance, and do not move
+     the sheet afterwards. Check the debug overlay—MARC outlines the detected page in blue so you can
+     confirm the draw region before running the robot.
+
+4. **Jog three calibration points so the robot knows where the page sits**
+   ```bash
+   python -m examples.marc.calib.page_to_robot \
+     --output examples/marc/out/calib_page_to_robot.npy
+   ```
+   The script will prompt for the page origin, +X, and +Y points. Use `lerobot-teleoperate` (or your
+   preferred teleop UI) to jog the SO101 until the marker touches each pencil dot on the page, read the
+   XY millimetre values reported by the follower, and type them in. This yields a 3×3 transform from
+   page millimetres into robot millimetres.
+
+5. **Stream the plan to the arm at gentle speeds**
    ```bash
    python -m examples.marc.run_draw_lerobot_ik \
-     --plan plans/lerobot_plan.json \
-     --port /dev/tty.usbmodemXXXX \
-     --urdf /path/to/so101_new_calib.urdf \
-     --homography calibration/homography.json \
-     --page-width 0.210 --page-height 0.297 \
-     --marker-config calibration/marker_config.json \
-     --z-contact -0.012 --z-safe 0.08 --pitch -88
+     --plan examples/marc/out/<slug>_plan.json \
+     --port /dev/tty.usbmodem12345601 \
+     --urdf /absolute/path/to/so101_new_calib.urdf \
+     --homography examples/marc/out/calib_page_to_robot.npy \
+     --page-width 0.2159 --page-height 0.2794 \
+     --z-contact -0.012 --z-safe 0.08 \
+     --pitch -90 --roll 0 --yaw 180 \
+     --calibrate
    ```
-3. To run the optional closed-loop correction after each colour, add
-   `--correct`. The executor will capture the page via the follower camera,
-   warp it with the supplied homography, and draw residual strokes for pixels
-   that differ from the provided raster.
-4. Use `--calibrate` on the first run to push calibration constants to the
-   motors.
+   Swap the port for whatever your OS reports. The driver mirrors the IK routine from `teleoperate.py`
+   and streams poses at 15 Hz with 4 cm/s travel and 2 cm/s draw speeds to stay well within the SO101’s
+   comfortable region.
 
-## 5. Advanced options
+6. **Optional correction pass** — once the camera flow is solid, add
+   `--correct --camera-homography examples/marc/out/page_homography.npz --target-image examples/marc/out/<slug>.png`
+   to re-run a quick touch-up cycle.
 
-- Tune the command rate with `--command-rate` (Hz) to match the latency of your
-  serial link.
-- Override travel/draw speeds or end-effector orientation with
-  `--travel-speed`, `--draw-speed`, `--pick-speed`, `--pitch`, `--roll`, and
-  `--yaw`.
-- Supply a global raster for correction via `--target-image` if the colour
-  sections do not provide their own.
+## 3. Calibrating the physical paper setup
 
-## 6. Troubleshooting
+- Tape the sheet down before steps 3 and 4 so both the overhead photo and jogged points reference the
+  same pose. If the page moves later, redo both calibrations.
+- Mark the origin/+X/+Y dots in pencil on the sheet border. After jogging, leave them for reuse or
+  erase gently.
+- Keep cables clear of the camera so the homography stays valid between the photo and the draw pass.
+- If you are skipping the camera entirely, you only need the three-point jog file
+  (`calib_page_to_robot.npy`).
 
-- If you see "OpenCV not installed" warnings, install `opencv-python` to enable
-  correction.
-- IK failures typically stem from an inaccurate homography or invalid URDF
-  path; double-check both and reduce `--travel-speed` to command smaller steps.
+## 4. Module overview
+
+- `vectorize.generate`: loads SDXL (falls back to SD 1.5) and renders the prompt to a PNG on the best
+  available device (CUDA → MPS → CPU). Seeded generators are supported.
+- `vectorize.potrace_wrap`: thresholds the PNG with OpenCV, writes a temporary PBM, and shells out to
+  the Potrace binary so the output SVG respects page dimensions.
+- `vectorize.simplify_svg`: removes tiny path segments and simplifies curves before planning.
+- `planner.vector_planning`: samples SVG paths into polylines, orders them with a nearest-neighbour
+  heuristic, and groups by colour. `planner.make_plan` converts those strokes into metre-based JSON.
+- `calib.estimate_homography`: detects four high-contrast squares (or optional AprilTags) in an
+  overhead image and stores the camera→page homography (with an optional debug overlay).
+- `calib.page_to_robot`: fits a rigid 2D transform from three jogged page points to robot XY space.
+- `executor.so100_driver`: wraps `SO100Follower`, loads the same URDF used by teleoperation, solves
+  planar IK via `RobotKinematics`, and streams low-speed pose interpolations.
+- `run_draw_lerobot_ik`: ties everything together, optionally docking markers (if configured) and
+  running a correction pass.
+
+## 5. Troubleshooting
+
+- `potrace: command not found` → ensure it is installed and on `PATH` (`potrace --version`).
+- IK failure logs usually point to a bad calibration. Re-run the overhead photo and three-point jog,
+  making sure the paper never moved between the two steps.
+- If the follower does not move, double-check `--port` and that the URDF path is correct. The driver
+  logs the initial joint snapshot on connect—verify it matches expectations.
+- Speeds are conservative; only raise `--travel-speed`/`--draw-speed` once the basic flow is rock
+  solid.
+
+## 6. How the transforms work (math)
+
+The calibration pipeline assumes the sheet of paper is planar. The overhead photo gives us four
+corner pixels \((u_i, v_i)\) which we map to canonical page coordinates \((x_i, y_i)\) measured in
+millimetres (e.g. \((0, 0), (215.9, 0), (215.9, 279.4), (0, 279.4))\). OpenCV solves for a
+homography matrix \(H\) such that, in homogeneous coordinates,
+
+\[
+\lambda
+\begin{bmatrix}
+ x \\
+ y \\
+ 1
+\end{bmatrix}
+ =
+ H
+\begin{bmatrix}
+ u \\
+ v \\
+ 1
+\end{bmatrix},
+\]
+
+with \(\lambda\) being an arbitrary projective scale. Because the page is flat, the camera height is
+implicitly encoded in \(H\); if the camera moves or the paper bends, the original homography no
+longer matches reality and you need a new overhead photo.
+
+The jog calibration produces a 2D rigid transform that aligns page millimetres with robot XY
+millimetres. Given three non-collinear page points \(P_i\) and their measured robot coordinates
+\(R_i\), we solve the classic Procrustes problem: find rotation matrix \(R\) and translation vector
+\(t\) minimising \(\sum_i \|R P_i + t - R_i\|^2\). The SVD-based solution implemented in
+`calib.page_to_robot.fit_rigid_transform` computes
+
+\[
+R = V U^T,\qquad t = \bar{R} - R\,\bar{P},
+\]
+
+where \(U\Sigma V^T\) is the singular value decomposition of the covariance matrix between centred
+point sets and the bars denote means. The resulting homogeneous matrix is
+
+\[
+T =
+\begin{bmatrix}
+ R & t \\
+ 0 & 1
+\end{bmatrix},
+\]
+
+which maps page millimetres into robot millimetres. During execution we convert a stroke point from
+camera pixels → page millimetres (via \(H\)) → robot millimetres (via \(T\)) and then feed those XY
+targets into the SO101 planar IK solver together with the requested Z heights.
+
+The example photo above—with four taped black squares tight to the paper corners—is a good input for
+the square detector. Ensure all four squares are visible, avoid glare, and keep the camera fixed at
+the same height during homography capture and drawing.
+

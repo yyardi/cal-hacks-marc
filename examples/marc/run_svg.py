@@ -39,8 +39,18 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--threshold", type=float, default=128.0, help="Binarisation threshold for Potrace")
     parser.add_argument("--turdsize", type=int, default=2, help="Potrace turdsize parameter")
     parser.add_argument("--opt-tolerance", type=float, default=0.2, help="Potrace opttolerance parameter")
-    parser.add_argument("--page-width", type=int, default=None, help="Desired SVG width")
-    parser.add_argument("--page-height", type=int, default=None, help="Desired SVG height")
+    parser.add_argument(
+        "--page-width",
+        type=float,
+        default=None,
+        help="Optional SVG width passed to Potrace (accepts floats)",
+    )
+    parser.add_argument(
+        "--page-height",
+        type=float,
+        default=None,
+        help="Optional SVG height passed to Potrace (accepts floats)",
+    )
     parser.add_argument("--simplify-tolerance", type=float, default=2.0, help="Tolerance for SVG simplification")
     parser.add_argument("--no-simplify", action="store_true", help="Skip SVG simplification step")
     return parser
