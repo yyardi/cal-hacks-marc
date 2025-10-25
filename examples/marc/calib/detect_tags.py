@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Dict, List, Optional, Sequence
 
 import cv2
@@ -56,9 +57,13 @@ def _ensure_color(image: np.ndarray) -> np.ndarray:
 def detect_fiducials(
     image: np.ndarray,
     *,
-    dictionary: str = "DICT_APRILTAG_36h11",
+    mode: str = "auto",
+    dictionary: Optional[str] = "DICT_APRILTAG_36h11",
     expected_ids: Optional[Sequence[int]] = None,
     detector_parameters: Optional[cv2.aruco.DetectorParameters] = None,
+    square_min_area_fraction: float = 0.0002,
+    square_max_aspect_ratio: float = 1.5,
+    square_relaxation_multiplier: float = 0.25,
 ) -> DetectionResult:
     """Detect four square fiducials in ``image``.
 
@@ -66,9 +71,15 @@ def detect_fiducials(
     ----------
     image:
         Input BGR or grayscale image from the calibration camera.
+    mode:
+        ``"auto"`` (default) will attempt AprilTag/ArUco detection if ``dictionary``
+        is provided, otherwise it falls back to high-contrast square detection.
+        Use ``"aruco"`` to force AprilTag detection or ``"squares"`` to force the
+        contour-based square detector.
     dictionary:
-        Name of the OpenCV ``cv2.aruco`` dictionary to use. The default works for
-        AprilTag 36h11 markers which are commonly printed on calibration sheets.
+        Name of the OpenCV ``cv2.aruco`` dictionary to use when ``mode`` is
+        ``"auto"`` or ``"aruco"``. Set to ``None`` when only square detection is
+        desired.
     expected_ids:
         Optional iterable of marker IDs to keep. When provided, only detections
         whose IDs appear in this list are retained. This is useful when the
@@ -76,6 +87,15 @@ def detect_fiducials(
     detector_parameters:
         Optional ``cv2.aruco.DetectorParameters`` instance to tweak the
         detector. When omitted, OpenCV defaults are used.
+    square_min_area_fraction:
+        Minimum contour area (relative to the total image area) for a candidate
+        square to be retained when using the contour-based detector.
+    square_max_aspect_ratio:
+        Maximum edge-length ratio allowed when accepting a contour as a square.
+    square_relaxation_multiplier:
+        Factor applied to ``square_min_area_fraction`` when the first pass finds
+        fewer than four candidates. Smaller factors relax the requirement more
+        aggressively before falling back to a best-effort selection of quads.
 
     Returns
     -------
@@ -99,46 +119,120 @@ def detect_fiducials(
         raise ValueError("Expected BGR or grayscale image")
 
     gray = gray.astype(np.uint8)
+    overlay = _ensure_color(image)
 
-    if not hasattr(cv2, "aruco"):
-        raise RuntimeError("cv2.aruco module is required for fiducial detection")
+    mode = mode.lower()
 
-    dict_attr = getattr(cv2.aruco, dictionary, None)
-    if dict_attr is None:
-        raise ValueError(f"Unknown cv2.aruco dictionary '{dictionary}'")
+    use_aruco = False
+    tag_corners: List[np.ndarray] = []
+    ids: np.ndarray
+    extras: Dict[str, np.ndarray] = {}
 
-    aruco_dict = cv2.aruco.getPredefinedDictionary(dict_attr)
-    if detector_parameters is not None:
-        params = detector_parameters
-    else:
-        if hasattr(cv2.aruco, "DetectorParameters"):
-            params = cv2.aruco.DetectorParameters()
+    if mode in {"auto", "aruco"} and dictionary is not None:
+        if not hasattr(cv2, "aruco"):
+            if mode == "aruco":
+                raise RuntimeError("cv2.aruco module is required for fiducial detection")
         else:
-            params = cv2.aruco.DetectorParameters_create()
+            dict_attr = getattr(cv2.aruco, dictionary, None)
+            if dict_attr is None:
+                raise ValueError(f"Unknown cv2.aruco dictionary '{dictionary}'")
 
-    # Detector API differs between OpenCV versions.
-    if hasattr(cv2.aruco, "ArucoDetector"):
-        detector = cv2.aruco.ArucoDetector(aruco_dict, params)
-        corners, ids, rejected = detector.detectMarkers(gray)
-    else:
-        corners, ids, rejected = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=params)
+            aruco_dict = cv2.aruco.getPredefinedDictionary(dict_attr)
+            if detector_parameters is not None:
+                params = detector_parameters
+            else:
+                if hasattr(cv2.aruco, "DetectorParameters"):
+                    params = cv2.aruco.DetectorParameters()
+                else:
+                    params = cv2.aruco.DetectorParameters_create()
 
-    if ids is None or len(ids) == 0:
-        raise RuntimeError("No fiducials detected in input image")
+            if hasattr(cv2.aruco, "ArucoDetector"):
+                detector = cv2.aruco.ArucoDetector(aruco_dict, params)
+                corners, raw_ids, rejected = detector.detectMarkers(gray)
+            else:
+                corners, raw_ids, rejected = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=params)
 
-    ids = ids.reshape(-1)
-    if expected_ids is not None:
-        expected_set = set(expected_ids)
-        filtered: List[np.ndarray] = []
-        filtered_ids: List[int] = []
-        for marker_corners, marker_id in zip(corners, ids):
-            if marker_id in expected_set:
-                filtered.append(marker_corners)
-                filtered_ids.append(int(marker_id))
-        corners = filtered
-        ids = np.asarray(filtered_ids, dtype=np.int32)
+            if raw_ids is not None and len(raw_ids) > 0:
+                use_aruco = True
+                raw_ids = raw_ids.reshape(-1)
+                if expected_ids is not None:
+                    expected_set = set(expected_ids)
+                    filtered: List[np.ndarray] = []
+                    filtered_ids: List[int] = []
+                    for marker_corners, marker_id in zip(corners, raw_ids):
+                        if marker_id in expected_set:
+                            filtered.append(marker_corners)
+                            filtered_ids.append(int(marker_id))
+                    corners = filtered
+                    raw_ids = np.asarray(filtered_ids, dtype=np.int32)
+                tag_corners = [np.asarray(corner).reshape(-1, 2).astype(np.float32) for corner in corners]
+                ids = raw_ids.astype(np.int32)
+                extras["rejected"] = np.array(rejected, dtype=object) if rejected is not None else np.array([])
 
-    tag_corners = [np.asarray(corner).reshape(-1, 2).astype(np.float32) for corner in corners]
+    if not use_aruco:
+        # Contour-based detector for plain black squares.
+        height, width = gray.shape[:2]
+        image_area = float(height * width)
+        min_area = max(square_min_area_fraction * image_area, 1.0)
+
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+        def _gather_quads(binary: np.ndarray) -> tuple[list[tuple[float, np.ndarray]], list[tuple[float, np.ndarray]]]:
+            quads: list[tuple[float, np.ndarray]] = []
+            filtered: list[tuple[float, np.ndarray]] = []
+            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                if area <= 0:
+                    continue
+                perimeter = cv2.arcLength(contour, True)
+                if perimeter <= 0:
+                    continue
+                approx = cv2.approxPolyDP(contour, 0.04 * perimeter, True)
+                if len(approx) != 4 or not cv2.isContourConvex(approx):
+                    continue
+                approx = approx.reshape(-1, 2).astype(np.float32)
+                edges = np.linalg.norm(np.roll(approx, -1, axis=0) - approx, axis=1)
+                min_edge = edges.min()
+                max_edge = edges.max()
+                if min_edge <= 0:
+                    continue
+                ratio = max_edge / max(min_edge, 1e-6)
+                if ratio > square_max_aspect_ratio:
+                    continue
+                candidate = (float(area), approx)
+                quads.append(candidate)
+                if area >= min_area:
+                    filtered.append(candidate)
+            return filtered, quads
+
+        filtered_quads, all_quads = _gather_quads(thresh)
+
+        if len(filtered_quads) < 4:
+            # Relax area threshold automatically: look for the best quads even if tiny.
+            relaxed_min_area = max(square_relaxation_multiplier * min_area, 1.0)
+            filtered_quads = [candidate for candidate in all_quads if candidate[0] >= relaxed_min_area]
+
+        if len(filtered_quads) < 4 and all_quads:
+            # Still not enough? take the four largest quads overall to give users a best-effort result.
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "Square detector only found %d strong candidates; relaxing thresholds. "
+                "Consider increasing square size or adjusting --square-min-area-fraction.",
+                len(filtered_quads),
+            )
+            filtered_quads = sorted(all_quads, key=lambda item: item[0], reverse=True)[:4]
+
+        if len(filtered_quads) < 4:
+            raise RuntimeError(
+                "Detected fewer than four square fiducials; adjust lighting or tweak --square-min-area-fraction"
+            )
+
+        filtered_quads.sort(key=lambda item: item[0], reverse=True)
+        tag_corners = [candidate[1] for candidate in filtered_quads[:4]]
+        ids = np.arange(len(tag_corners), dtype=np.int32)
+        extras["threshold"] = thresh
 
     if len(tag_corners) < 4:
         raise RuntimeError("Expected at least four fiducials to determine page corners")
@@ -161,11 +255,41 @@ def detect_fiducials(
 
     ordered_corners = _order_points(approx)
 
-    overlay = _ensure_color(image)
-    drawn_corners = [corner.reshape(1, -1, 2) for corner in tag_corners]
-    cv2.aruco.drawDetectedMarkers(overlay, drawn_corners, ids.reshape(-1, 1))
-
     centers = np.array([np.mean(corner, axis=0) for corner in tag_corners], dtype=np.float32)
+
+    if use_aruco:
+        drawn_corners = [corner.reshape(1, -1, 2) for corner in tag_corners]
+        cv2.aruco.drawDetectedMarkers(overlay, drawn_corners, ids.reshape(-1, 1))
+    else:
+        for idx, corner in enumerate(tag_corners):
+            pts = corner.reshape(-1, 1, 2).astype(int)
+            cv2.polylines(overlay, [pts], True, (0, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(
+                overlay,
+                f"sq{idx}",
+                (int(centers[idx, 0]) + 4, int(centers[idx, 1]) - 4),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+    overlay_corners = ordered_corners.reshape(4, 1, 2).astype(int)
+    cv2.polylines(overlay, [overlay_corners], True, (255, 0, 0), 3, cv2.LINE_AA)
+    for idx, pt in enumerate(ordered_corners):
+        cv2.circle(overlay, (int(pt[0]), int(pt[1])), 6, (255, 0, 0), -1)
+        cv2.putText(
+            overlay,
+            f"P{idx}",
+            (int(pt[0]) + 6, int(pt[1]) - 6),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
     for center, marker_id in zip(centers, ids):
         cv2.circle(overlay, tuple(int(v) for v in center), 4, (0, 255, 0), -1)
         cv2.putText(
@@ -179,12 +303,7 @@ def detect_fiducials(
             cv2.LINE_AA,
         )
 
-    overlay_corners = ordered_corners.reshape(4, 1, 2).astype(int)
-    cv2.polylines(overlay, [overlay_corners], True, (255, 0, 0), 2, cv2.LINE_AA)
-
-    extras: Dict[str, np.ndarray] = {"hull": hull.reshape(-1, 2)}
-    if rejected is not None:
-        extras["rejected"] = np.array(rejected, dtype=object)
+    extras["hull"] = hull.reshape(-1, 2)
 
     return DetectionResult(
         page_corners=ordered_corners,

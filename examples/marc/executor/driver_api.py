@@ -21,9 +21,9 @@ class DriverCommandType(Enum):
 class ExecutorConfig:
     """Common configuration shared by all driver implementations."""
 
-    travel_speed: float = 80.0
-    draw_speed: float = 40.0
-    pick_speed: float = 20.0
+    travel_speed: float = 0.04
+    draw_speed: float = 0.02
+    pick_speed: float = 0.015
     z_contact: float = -0.01
     z_safe: float = 0.05
     marker_z_offset: float = 0.02
