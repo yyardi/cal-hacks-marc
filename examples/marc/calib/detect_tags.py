@@ -176,7 +176,6 @@ def detect_fiducials(
         min_area = max(square_min_area_fraction * image_area, 1.0)
 
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
         def _gather_quads(binary: np.ndarray) -> tuple[list[tuple[float, np.ndarray]], list[tuple[float, np.ndarray]]]:
             quads: list[tuple[float, np.ndarray]] = []
@@ -207,32 +206,86 @@ def detect_fiducials(
                     filtered.append(candidate)
             return filtered, quads
 
-        filtered_quads, all_quads = _gather_quads(thresh)
+        # Build a pool of candidate binaries so low contrast photos still yield quads.
+        binaries = []
+        _, otsu_inv = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        binaries.append(otsu_inv)
+        _, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        binaries.append(otsu)
+        adaptive = cv2.adaptiveThreshold(
+            blurred,
+            255,
+            cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY_INV,
+            31,
+            5,
+        )
+        binaries.append(adaptive)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        binaries.extend(cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel) for binary in binaries[:2])
+
+        filtered_quads: list[tuple[float, np.ndarray]] = []
+        all_quads: list[tuple[float, np.ndarray]] = []
+        seen: dict[tuple[int, int, int, int], tuple[float, np.ndarray]] = {}
+
+        for binary in binaries:
+            filtered, quads = _gather_quads(binary)
+            all_quads.extend(quads)
+            filtered_quads.extend(filtered)
+            for _, approx in quads:
+                key = tuple(int(v) for v in approx.reshape(-1))
+                seen[key] = (float(cv2.contourArea(approx.reshape(-1, 1, 2))), approx)
 
         if len(filtered_quads) < 4:
             # Relax area threshold automatically: look for the best quads even if tiny.
             relaxed_min_area = max(square_relaxation_multiplier * min_area, 1.0)
             filtered_quads = [candidate for candidate in all_quads if candidate[0] >= relaxed_min_area]
 
-        if len(filtered_quads) < 4 and all_quads:
-            # Still not enough? take the four largest quads overall to give users a best-effort result.
+        if len(filtered_quads) < 4 and seen:
+            # Still not enough? take the four largest distinct quads overall to give users a best-effort result.
             logger = logging.getLogger(__name__)
             logger.warning(
                 "Square detector only found %d strong candidates; relaxing thresholds. "
                 "Consider increasing square size or adjusting --square-min-area-fraction.",
                 len(filtered_quads),
             )
-            filtered_quads = sorted(all_quads, key=lambda item: item[0], reverse=True)[:4]
+            deduped = sorted(seen.values(), key=lambda item: item[0], reverse=True)
+            filtered_quads = deduped[:4]
 
         if len(filtered_quads) < 4:
-            raise RuntimeError(
-                "Detected fewer than four square fiducials; adjust lighting or tweak --square-min-area-fraction"
-            )
+            # Final fallback: estimate page corners from the largest contour.
+            logger = logging.getLogger(__name__)
+            logger.warning("Falling back to page contour detection; verify overlay before proceeding.")
+            binary = binaries[0]
+            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not contours:
+                raise RuntimeError(
+                    "Detected fewer than four square fiducials; adjust lighting or tweak --square-min-area-fraction"
+                )
+            largest = max(contours, key=cv2.contourArea)
+            epsilon = 0.02 * cv2.arcLength(largest, True)
+            approx = cv2.approxPolyDP(largest, epsilon, True).reshape(-1, 2).astype(np.float32)
+            if approx.shape[0] < 4:
+                rect = cv2.boxPoints(cv2.minAreaRect(largest))
+                approx = rect.astype(np.float32)
+            if approx.shape[0] != 4:
+                raise RuntimeError(
+                    "Unable to infer page bounds; capture a clearer photo or increase fiducial size"
+                )
+            approx = _order_points(approx)
+            side = max(np.sqrt(cv2.contourArea(largest)) * 0.05, 5.0)
+            offsets = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]], dtype=np.float32) * side
+            synthetic: list[tuple[float, np.ndarray]] = []
+            for point in approx:
+                square = point + offsets
+                synthetic.append((float(side ** 2), square))
+            filtered_quads = synthetic
 
         filtered_quads.sort(key=lambda item: item[0], reverse=True)
         tag_corners = [candidate[1] for candidate in filtered_quads[:4]]
         ids = np.arange(len(tag_corners), dtype=np.int32)
-        extras["threshold"] = thresh
+        extras["threshold"] = otsu_inv
 
     if len(tag_corners) < 4:
         raise RuntimeError("Expected at least four fiducials to determine page corners")

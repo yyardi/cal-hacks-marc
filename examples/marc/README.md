@@ -91,8 +91,12 @@ printed by `run_svg` and fill in the port/paths that match your setup.
      box that will become the drawing canvas.
    - The sample photo you shared—phone pointed straight down with four taped squares—is ideal. Keep the
      camera height fixed between capture and drawing; that geometry is baked into the homography.
+   - Replace `/path/to/overhead_photo.png` with your actual capture (for example, a local
+     `examples/marc/paper.png` that you do **not** commit). The script never ships a sample image
+     because each rig has a different camera mounting.
    - If the CLI reports fewer than four squares, lower `--square-min-area-fraction` (e.g. `5e-5`) or
-     increase lighting/contrast and rerun. The script now auto-relaxes thresholds before failing.
+     increase lighting/contrast and rerun. The script now auto-relaxes thresholds before failing and,
+     as a last resort, fits a rectangle to the largest contour so you can still inspect the overlay.
 
 4. **Jog three calibration points so the robot knows where the page sits**
    ```bash
