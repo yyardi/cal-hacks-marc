@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 from typing import Iterable, Sequence
 
+from .constants import SAFE_WORKSPACE_SIZE_MM
 from .executor import (
     ExecutorConfig,
     MOVE_TO,
@@ -30,14 +31,14 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--page-width-mm",
         type=float,
-        default=215.9,
-        help="Physical page width in millimetres (default: US Letter)",
+        default=SAFE_WORKSPACE_SIZE_MM[0],
+        help="Physical drawing width in millimetres (default: 173 mm)",
     )
     parser.add_argument(
         "--page-height-mm",
         type=float,
-        default=279.4,
-        help="Physical page height in millimetres (default: US Letter)",
+        default=SAFE_WORKSPACE_SIZE_MM[1],
+        help="Physical drawing height in millimetres (default: 150 mm)",
     )
     parser.add_argument(
         "--square-size-mm",
@@ -48,7 +49,7 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--margin-mm",
         type=float,
-        default=25.0,
+        default=15.0,
         help="Minimum margin to keep from each page edge in millimetres",
     )
     parser.add_argument("--travel-speed", type=float, default=0.04, help="Travel speed in m/s")

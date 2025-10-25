@@ -173,7 +173,17 @@ class SO100Driver:
     # ------------------------------------------------------------------
     # Command handlers
     # ------------------------------------------------------------------
-    def _cmd_move_to(self, x: float, y: float, *, z: float | None = None, speed: float | None = None) -> None:
+    def _cmd_move_to(
+        self,
+        x: float,
+        y: float,
+        *,
+        z: float | None = None,
+        speed: float | None = None,
+        validate: bool = True,
+    ) -> None:
+        if validate:
+            self._assert_within_workspace(x, y)
         pose = self._page_to_pose(x, y, z)
         if self.state.last_pose is None:
             self.state.last_pose = pose.copy()
@@ -210,15 +220,28 @@ class SO100Driver:
 
     def _visit_marker(self, xy: Sequence[float], contact_z: float) -> None:
         self._cmd_pen_state(False)
-        self._cmd_move_to(xy[0], xy[1], z=self.cfg.z_safe, speed=self.cfg.travel_speed)
+        self._cmd_move_to(
+            xy[0],
+            xy[1],
+            z=self.cfg.z_safe,
+            speed=self.cfg.travel_speed,
+            validate=False,
+        )
         self._cmd_move_to(
             xy[0],
             xy[1],
             z=contact_z - self.cfg.marker_z_offset,
             speed=self.cfg.pick_speed,
+            validate=False,
         )
         time.sleep(0.25)
-        self._cmd_move_to(xy[0], xy[1], z=self.cfg.z_safe, speed=self.cfg.travel_speed)
+        self._cmd_move_to(
+            xy[0],
+            xy[1],
+            z=self.cfg.z_safe,
+            speed=self.cfg.travel_speed,
+            validate=False,
+        )
 
     def _page_to_pose(self, x: float, y: float, z: float | None) -> np.ndarray:
         page_point = np.array([x, y, 1.0], dtype=float)
@@ -237,6 +260,17 @@ class SO100Driver:
             pose[2, 3] = float(z)
         pose[:3, 3] += self.base_pose
         return pose
+
+    # ------------------------------------------------------------------
+    # Workspace validation
+    # ------------------------------------------------------------------
+    def _assert_within_workspace(self, x: float, y: float) -> None:
+        eps = 1e-6
+        if x < -eps or y < -eps or x > self.page_size[0] + eps or y > self.page_size[1] + eps:
+            raise ValueError(
+                f"Requested point ({x:.4f}, {y:.4f}) lies outside the configured workspace "
+                f"(expected 0 ≤ x ≤ {self.page_size[0]:.4f}, 0 ≤ y ≤ {self.page_size[1]:.4f})."
+            )
 
     def _stream_pose(self, target_pose: np.ndarray, speed: float) -> None:
         if self.state.last_pose is None:

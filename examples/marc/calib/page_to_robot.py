@@ -9,7 +9,7 @@ from typing import Iterable
 
 import numpy as np
 
-from .homography import DEFAULT_PAGE_SIZE_MM
+from ..constants import SAFE_WORKSPACE_SIZE_MM
 
 OUTPUT_PATH = Path("examples/marc/out/calib_page_to_robot.npy")
 
@@ -94,8 +94,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         nargs=2,
         type=float,
         metavar=("WIDTH", "HEIGHT"),
-        default=DEFAULT_PAGE_SIZE_MM,
-        help="Physical page size in millimetres. Defaults to US Letter.",
+        default=SAFE_WORKSPACE_SIZE_MM,
+        help=(
+            "Physical drawing area in millimetres. The default (173×150 mm)"
+            " matches the safe SO101 workspace."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -139,7 +142,20 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print("MARC page-to-robot calibration")
     print("--------------------------------")
-    print("Jog the robot to the requested locations and record the XY coordinates.")
+    print(
+        "Jog the robot to the requested locations and record the XY coordinates"
+        " reported by your teleoperation tool."
+    )
+    print()
+    print(
+        "Workspace: %.1f mm wide × %.1f mm tall (origin at the lower-left)."
+        % (page_width, page_height)
+    )
+    print(
+        "Tip: run `python -m examples.lekiwi.teleoperate` in another terminal"
+        " after editing the SO100FollowerConfig port/URDF to match your rig."
+    )
+    print("Position the pen on each pencil dot, then enter the XY pair here.")
 
     if args.non_interactive:
         robot_points = read_points_from_stdin()
