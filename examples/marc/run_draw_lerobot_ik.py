@@ -42,9 +42,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--homography", required=True, type=Path, help="Homography mapping page to robot")
     parser.add_argument("--page-width", type=float, required=True, help="Drawing page width in meters")
     parser.add_argument("--page-height", type=float, required=True, help="Drawing page height in meters")
-    parser.add_argument("--travel-speed", type=float, default=80.0, help="Travel speed in page units per second")
-    parser.add_argument("--draw-speed", type=float, default=40.0, help="Drawing speed in page units per second")
-    parser.add_argument("--pick-speed", type=float, default=20.0, help="Speed used when picking markers")
+    parser.add_argument("--travel-speed", type=float, default=0.04, help="Travel speed in page units per second")
+    parser.add_argument("--draw-speed", type=float, default=0.02, help="Drawing speed in page units per second")
+    parser.add_argument("--pick-speed", type=float, default=0.015, help="Speed used when picking markers")
     parser.add_argument("--z-contact", type=float, default=-0.01, help="Z height when the pen touches the page")
     parser.add_argument("--z-safe", type=float, default=0.05, help="Safe Z height for travel")
     parser.add_argument("--pitch", type=float, default=-90.0, help="Pitch angle (degrees) of the wrist")
@@ -52,6 +52,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--yaw", type=float, default=180.0, help="Yaw angle (degrees) of the wrist")
     parser.add_argument("--command-rate", type=float, default=15.0, help="Command streaming rate (Hz)")
     parser.add_argument("--marker-config", type=Path, help="Optional JSON describing marker pick/return slots")
+    parser.add_argument(
+        "--camera-homography",
+        type=Path,
+        help="Optional homography mapping camera pixels to page millimetres for correction",
+    )
     parser.add_argument("--base-pose", type=float, nargs=3, default=(0.0, 0.0, 0.0), help="XYZ offset of the robot base")
     parser.add_argument("--calibrate", action="store_true", help="Run calibration on connect")
     parser.add_argument("--correct", action="store_true", help="Enable correction pass after each color")
@@ -158,6 +163,7 @@ def main() -> None:
         port=args.port,
         urdf_path=args.urdf,
         homography_path=args.homography,
+        camera_homography_path=args.camera_homography,
         page_size=(args.page_width, args.page_height),
         executor_cfg=executor_cfg,
         base_pose=args.base_pose,

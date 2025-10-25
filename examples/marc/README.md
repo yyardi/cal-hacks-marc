@@ -1,102 +1,116 @@
 # MARC drawing executor
 
-This directory contains utilities to reproduce the MARC drawing demos with a
-[Lerobot SO-100 follower](https://github.com/huggingface/lerobot). The workflow
-converts page-space strokes into end-effector poses solved through inverse
-kinematics and streams them to the physical arm.
+This directory contains the full "prompt → SVG → stroke plan → SO101 draw" toolchain used by the
+MARC (Marker-Actuated Robotic Controller) demos. Everything here targets the Lerobot SO-100/SO-101
+follower running in degrees mode and streams low-speed IK trajectories to the arm.
 
-## 1. Prerequisites
+## 1. Environment and assets
 
-1. Install the Python dependencies for the project and the optional kinematics
-   extras (placo + OpenCV):
+Run these once on the machine that will drive the robot:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e .[kinematics]
+pip install opencv-python pillow diffusers[torch]
+export HF_TOKEN=...  # or run `huggingface-cli login`
+```
+
+Download the SO101 URDF that ships with the arm (`Simulation/SO101/so101_new_calib.urdf`) and note
+the serial port that appears when you plug in the follower (for example
+`/dev/tty.usbmodem12345601`). The port is passed at runtime, so you do **not** hard-code it into the
+codebase.
+
+## 2. End-to-end workflow
+
+Follow these steps every time you want to draw a new prompt. Replace `<slug>` with the slug printed
+by the SVG generator and update the port/paths to match your machine.
+
+1. **Generate raster + vector art**
    ```bash
-   pip install -e .[kinematics]
-   pip install opencv-python pillow
+   python -m examples.marc.run_svg \
+     "minimal line-art cat, black outline" \
+     --output-dir examples/marc/out \
+     --page-width 215.9 --page-height 279.4
    ```
-2. Download the SO-100 URDF from [TheRobotStudio/SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100)
-   (recommended file: `Simulation/SO101/so101_new_calib.urdf`).
-3. Ensure the SO-100 follower firmware is on the latest release and that you
-   know the serial port that exposes the motor bus (for example `/dev/tty.usbmodemXXXX`).
-4. Prepare a JSON stroke plan and a page-to-robot homography (see below).
+   This produces `examples/marc/out/<slug>.png`, `<slug>.svg`, and `<slug>-simplified.svg`.
 
-## 2. Calibration and homography
-
-1. Calibrate the follower using the utilities that ship with Lerobot, or allow
-   the executor to run `--calibrate` on the first connection (this prompts for
-   manual alignment).
-2. Create a homography that maps points in page coordinates *(x, y in meters)*
-   to the robot workspace. Store the 3×3 matrix as either `homography.npy`,
-   an `.npz` file with a `homography` entry, or a JSON file with a
-   `{"homography": [[...]]}` payload. The same file is consumed both for
-   execution and for the optional correction stage.
-3. (Optional) Measure the marker rack slots and store them in
-   `marker_config.json`. Example:
-   ```json
-   {
-     "black": {"pick": [0.18, -0.12], "return": [0.18, -0.12], "z": -0.015},
-     "magenta": {"pick": [0.24, -0.12]}
-   }
+2. **Convert the SVG into a robot plan (meters in JSON)**
+   ```bash
+   python -m examples.marc.planner.make_plan \
+     examples/marc/out/<slug>-simplified.svg \
+     --output examples/marc/out/<slug>_plan.json \
+     --page-width 215.9 --page-height 279.4 --unit mm
    ```
 
-## 3. Stroke plan format
+3. **Capture the page homography from the overhead camera**
+   - Print four high-contrast AprilTag 36h11 markers (IDs 0–3 work well) and tape them to the page
+     corners.
+   - Lock exposure/white-balance on the camera and take a top-down photo with the paper flattened.
+   - Run:
+     ```bash
+     python -m examples.marc.calib.estimate_homography \
+       /path/to/photo.png \
+       --output examples/marc/out/page_homography.npz \
+       --overlay examples/marc/out/homography_debug.png
+     ```
+     Inspect the overlay to confirm the corner order is correct.
 
-The executor consumes a JSON file that declares the page size and the strokes
-for each colour. A minimal example:
+4. **Jog the robot to align page space with robot XY**
+   ```bash
+   python -m examples.marc.calib.page_to_robot \
+     --output examples/marc/out/calib_page_to_robot.npy
+   ```
+   The script prompts for three points: the page origin, the +X point (along the page width), and the
+   +Y point (along the page height). Jog the SO101 using Lerobot teleop, read the follower display for
+   the XY coordinates, and type them in.
+
+5. **Stream the drawing at safe speeds**
+   ```bash
+   python -m examples.marc.run_draw_lerobot_ik \
+     --plan examples/marc/out/<slug>_plan.json \
+     --port /dev/tty.usbmodem12345601 \
+     --urdf /absolute/path/to/so101_new_calib.urdf \
+     --homography examples/marc/out/calib_page_to_robot.npy \
+     --camera-homography examples/marc/out/page_homography.npz \
+     --page-width 0.2159 --page-height 0.2794 \
+     --z-contact -0.012 --z-safe 0.08 --pitch -88 \
+     --calibrate
+   ```
+   The defaults limit travel to 4 cm/s and drawing moves to 2 cm/s to keep the IK solve stable.
+   Start with a single colour in your plan; multi-colour grouping comes later.
+
+6. **Optional: closed-loop correction after a pass**
+   Add `--correct --target-image examples/marc/out/<slug>.png` to step 5 once the camera feed is
+   confirmed. The driver warps the captured page with the stored homography and issues small residual
+   strokes where the edges differ.
+
+## 3. Understanding the calibration artefacts
+
+- `examples/marc/out/page_homography.npz` stores the camera→page homography computed from the photo.
+  It keeps the page size in millimetres, so re-run the command if you switch to A4.
+- `examples/marc/out/calib_page_to_robot.npy` contains the 3×3 homogeneous transform that maps
+  page millimetres into robot XY millimetres. This is loaded by the driver before each move.
+- If you move the page relative to the arm, repeat steps 3 and 4 before streaming a new plan.
+
+## 4. Marker rack presets (optional)
+
+If you have a fixed rack, create `examples/marc/out/marker_config.json`:
 
 ```json
 {
-  "page": {"width": 0.210, "height": 0.297},
-  "colors": [
-    {
-      "name": "black",
-      "strokes": [
-        [[0.02, 0.02], [0.05, 0.02], [0.05, 0.05]],
-        [[0.06, 0.04], [0.10, 0.04]]
-      ],
-      "raster": "artifacts/black.png"
-    }
-  ]
+  "black": {"pick": [0.18, -0.12], "return": [0.18, -0.12], "z": -0.015},
+  "blue": {"pick": [0.24, -0.12]}
 }
 ```
 
-Each stroke is an ordered list of page coordinates in metres. The optional
-`raster` points to a reference image used during correction.
+Pass the file with `--marker-config` so the driver knows where to dock the pen between colour passes.
 
-## 4. Running a drawing session
+## 5. Troubleshooting
 
-1. Place the page, align the camera, and insert a marker that matches the first
-   colour in the plan into the gripper.
-2. Execute the CLI:
-   ```bash
-   python -m examples.marc.run_draw_lerobot_ik \
-     --plan plans/lerobot_plan.json \
-     --port /dev/tty.usbmodemXXXX \
-     --urdf /path/to/so101_new_calib.urdf \
-     --homography calibration/homography.json \
-     --page-width 0.210 --page-height 0.297 \
-     --marker-config calibration/marker_config.json \
-     --z-contact -0.012 --z-safe 0.08 --pitch -88
-   ```
-3. To run the optional closed-loop correction after each colour, add
-   `--correct`. The executor will capture the page via the follower camera,
-   warp it with the supplied homography, and draw residual strokes for pixels
-   that differ from the provided raster.
-4. Use `--calibrate` on the first run to push calibration constants to the
-   motors.
-
-## 5. Advanced options
-
-- Tune the command rate with `--command-rate` (Hz) to match the latency of your
-  serial link.
-- Override travel/draw speeds or end-effector orientation with
-  `--travel-speed`, `--draw-speed`, `--pick-speed`, `--pitch`, `--roll`, and
-  `--yaw`.
-- Supply a global raster for correction via `--target-image` if the colour
-  sections do not provide their own.
-
-## 6. Troubleshooting
-
-- If you see "OpenCV not installed" warnings, install `opencv-python` to enable
-  correction.
-- IK failures typically stem from an inaccurate homography or invalid URDF
-  path; double-check both and reduce `--travel-speed` to command smaller steps.
+- If the robot refuses to move, double-check the serial port and that the URDF path points to the
+  SO101 calibration file.
+- IK failures usually indicate an inaccurate homography or page-to-robot transform. Re-take the photo,
+  confirm the overlay looks correct, and rerun the three-point jog routine.
+- Speeds are intentionally conservative. Increase `--travel-speed` and `--draw-speed` gradually (still
+  in metres per second) once everything is reliable.
