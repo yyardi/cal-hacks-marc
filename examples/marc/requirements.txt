@@ -1,0 +1,10 @@
+diffusers
+transformers
+accelerate
+opencv-contrib-python
+numpy
+pillow
+pupil-apriltags
+vpype
+cairosvg
+svgpathtools
