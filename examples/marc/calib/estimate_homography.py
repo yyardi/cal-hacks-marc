@@ -72,7 +72,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--square-relaxation-multiplier",
         type=float,
         default=0.25,
-        help="Automatic relaxation factor applied if fewer than four squares are detected",
+        help="(kept for compatibility; not used directly in the new detector)",
     )
     return parser
 
@@ -95,10 +95,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             square_max_aspect_ratio=args.square_max_aspect_ratio,
             square_relaxation_multiplier=args.square_relaxation_multiplier,
         )
-    except RuntimeError as exc:
-        raise SystemExit(
-            f"{exc}\nTry lowering --square-min-area-fraction or increasing the contrast of the fiducials."
-        ) from exc
+    except Exception as exc:
+        raise SystemExit(f"[homography] detection failed: {exc}")
+
     homography = compute_page_homography(detection.page_corners, tuple(args.page_size_mm))
     save_homography(args.output, homography.homography, homography.page_size)
 

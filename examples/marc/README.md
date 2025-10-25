@@ -76,14 +76,16 @@ printed by `run_svg` and fill in the port/paths that match your setup.
    The resulting JSON stores the page size in metres and an ordered list of strokes. Keep the default
    palette alone for now so the executor streams everything with one marker.
 
-3. **(Optional) Capture an overhead photo for the camera homography**
+3. **Capture an overhead photo for the camera homography**
    *If you do not have a fixed camera yet, skip this step and leave out `--camera-homography` when
    drawing.*
    ```bash
    python -m examples.marc.calib.estimate_homography \
-     /path/to/overhead_photo.png \
-     --output examples/marc/out/page_homography.npz \
-     --overlay examples/marc/out/homography_debug.png
+  examples/marc/paper.png \
+  --mode squares \
+  --square-min-area-fraction 0.00005 \
+  --overlay examples/marc/out/homography_debug.png \
+  --output examples/marc/out/page_homography.npz
    ```
    Tips:
    - Tape four high-contrast black squares tight to the paper corners (AprilTags stay available via
