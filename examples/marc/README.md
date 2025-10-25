@@ -32,6 +32,13 @@ out/         # artefacts (PNG, SVG, plans, calibration files) - gitignored
    pip install -e .
    pip install -r examples/marc/requirements.txt
    ```
+   The defaults limit travel to 4 cm/s and drawing moves to 2 cm/s to keep the IK solve stable.
+   Start with a single colour in your plan; multi-colour grouping comes later.
+
+6. **Optional: closed-loop correction after a pass**
+   Add `--correct --target-image examples/marc/out/<slug>.png` to step 5 once the camera feed is
+   confirmed. The driver warps the captured page with the stored homography and issues small residual
+   strokes where the edges differ.
 
 3. **Install PyTorch** — follow the command suggested at <https://pytorch.org/get-started/locally/>
    for your OS, Python version, and GPU/CPU.
