@@ -6,6 +6,10 @@ Everything inside `examples/marc/` is wired for the Lerobot SO-100/SO-101 follow
 IK, matching the joint ordering used by `teleoperate.py`. The defaults focus on a single marker so we
 can get reliable drawings first before layering colour swaps.
 
+> **Workspace limit:** The SO101 follower comfortably reaches a 170 mm × 150 mm rectangle when the
+> page origin is at the lower-left of the drawing. All calibration and planning commands below use
+> this area by default to avoid poses the hardware cannot hit reliably.
+
 ## Repo layout
 
 ```
@@ -32,7 +36,7 @@ out/         # artefacts (PNG, SVG, plans, calibration files) - gitignored
    pip install -e .
    pip install -r examples/marc/requirements.txt
    ```
-   The defaults limit travel to 4 cm/s and drawing moves to 2 cm/s to keep the IK solve stable.
+   The defaults limit travel to 2 cm/s and drawing moves to 1 cm/s to keep the IK solve rock solid.
    Start with a single colour in your plan; multi-colour grouping comes later.
 
 3. **Install PyTorch** — follow the command suggested at <https://pytorch.org/get-started/locally/>
@@ -71,7 +75,7 @@ printed by `run_svg` and fill in the port/paths that match your setup.
    python -m examples.marc.planner.make_plan \
      examples/marc/out/<slug>-simplified.svg \
      --output examples/marc/out/<slug>_plan.json \
-     --page-width 215.9 --page-height 279.4 --unit mm
+     --page-width 170 --page-height 150 --unit mm
    ```
    The resulting JSON stores the page size in metres and an ordered list of strokes. Keep the default
    palette alone for now so the executor streams everything with one marker.
@@ -106,14 +110,16 @@ printed by `run_svg` and fill in the port/paths that match your setup.
      --output examples/marc/out/calib_page_to_robot.npy
    ```
    What to do in practice:
-   1. Launch your teleoperation tool (for example `python -m examples.phone_to_so100.teleoperate`) after
-      editing the script’s `SO100FollowerConfig` port and URDF path to match your setup.
-   2. Tape three pencil dots on the page: origin (lower-left), +X (to the right), and +Y (toward the top).
-      Jog the pen tip until it just touches each dot, noting the live follower XY readout (millimetres) in
-      the teleop console.
-   3. Enter those three XY pairs when the calibration script prompts for origin, +X, and +Y. The stored
-      `.npy` file is the rigid transform from page millimetres into robot millimetres, solved via a
-      two-point Procrustes fit (rotation + translation only).
+   1. Launch your teleoperation tool (the keyboard helper in `examples/lekiwi/teleoperate.py` works
+      well—edit the `SO100FollowerConfig` port and URDF path before running `python -m examples.lekiwi.teleoperate`).
+   2. Tape three pencil dots on the page that mark the 170 mm × 150 mm drawing rectangle: origin at the
+      lower-left corner, +X to the right edge, and +Y along the top edge. Jog the pen tip onto each dot and
+      note the follower’s XY readout in millimetres. If you are using the Cal Hacks demo rig, you can skip
+      manual entry entirely with `--use-stage-default` to reuse the baked coordinates
+      `(0.195, -0.084) → (0.339, -0.084) → (0.195, 0.056)` metres.
+   3. Enter those three XY pairs when the calibration script prompts for origin, +X, and +Y (or rely on the
+      baked defaults). The stored `.npy` file is the rigid transform from page millimetres into robot
+      millimetres, solved via a two-point Procrustes fit (rotation + translation only).
 
 5. **(Optional but recommended) Run the hardware test square**
    Before streaming a prompt-driven plan, draw a centred square to confirm the calibration envelope:
@@ -122,8 +128,7 @@ printed by `run_svg` and fill in the port/paths that match your setup.
      --port /dev/tty.usbmodem12345601 \
      --urdf /absolute/path/to/so101_new_calib.urdf \
      --page-to-robot examples/marc/out/calib_page_to_robot.npy \
-     --page-width-mm 215.9 --page-height-mm 279.4 \
-     --square-size-mm 120 --margin-mm 25 --calibrate
+     --square-size-mm 110 --margin-mm 12 --calibrate
    ```
    The script moves gently and leaves a square centred on the page bounds the homography identified. If
    the square is skewed or off-centre, redo the jog calibration or camera photo before attempting a full
@@ -136,13 +141,13 @@ printed by `run_svg` and fill in the port/paths that match your setup.
      --port /dev/tty.usbmodem12345601 \
      --urdf /absolute/path/to/so101_new_calib.urdf \
      --homography examples/marc/out/calib_page_to_robot.npy \
-     --page-width 0.2159 --page-height 0.2794 \
-     --z-contact -0.012 --z-safe 0.08 \
+     --page-width 0.170 --page-height 0.150 \
+     --z-contact -0.028 --z-safe 0.05 \
      --pitch -90 --roll 0 --yaw 180 \
      --calibrate
    ```
    Swap the port for whatever your OS reports. The driver mirrors the IK routine from `teleoperate.py`
-   and streams poses at 15 Hz with 4 cm/s travel and 2 cm/s draw speeds to stay well within the SO101’s
+   and streams poses at 15 Hz with 2 cm/s travel and 1 cm/s draw speeds to stay well within the SO101’s
    comfortable region.
 
 7. **Optional correction pass** — once the camera flow is solid, add
