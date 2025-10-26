@@ -52,9 +52,18 @@ out/         # artefacts (PNG, SVG, plans, calibration files) - gitignored
    export HF_TOKEN=hf_xxx_read_token  # or run `huggingface-cli login`
    ```
 
-6. **Grab the SO101 URDF** that ships with the arm (`Simulation/SO101/so101_new_calib.urdf`) and keep
-   track of whichever serial port appears when you plug the follower in (`/dev/tty.usbmodem*` on macOS
-   and Linux). You will pass the port on the CLI; no source edits are required when it changes.
+6. **Grab the SO101 URDF.** Every SO-ARM100/SO101 follower ships with a USB stick that contains
+   `Simulation/SO101/so101_new_calib.urdf`. If you cannot find it locally, download the exact same file
+   from the manufacturer’s GitHub mirror by running:
+
+   ```bash
+   python -m examples.marc.fetch_so101_urdf
+   ```
+
+   The helper saves the URDF to `examples/marc/SO101/so101_new_calib.urdf` and verifies the SHA256 hash
+   so you know it matches the official release. Track whichever serial port appears when you plug the
+   follower in (`/dev/tty.usbmodem*` on macOS and Linux). You will pass the port on the CLI; no source
+   edits are required when it changes.
 
 ## 2. One-shot command sequence (prompt → draw)
 
