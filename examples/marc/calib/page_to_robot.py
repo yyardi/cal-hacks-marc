@@ -9,7 +9,12 @@ from typing import Iterable
 
 import numpy as np
 
-from ..constants import SAFE_WORKSPACE_SIZE_MM
+from ..constants import (
+    DEFAULT_STAGE_ORIGIN_MM,
+    DEFAULT_STAGE_X_POINT_MM,
+    DEFAULT_STAGE_Y_POINT_MM,
+    SAFE_WORKSPACE_SIZE_MM,
+)
 
 OUTPUT_PATH = Path("examples/marc/out/calib_page_to_robot.npy")
 
@@ -96,7 +101,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         metavar=("WIDTH", "HEIGHT"),
         default=SAFE_WORKSPACE_SIZE_MM,
         help=(
-            "Physical drawing area in millimetres. The default (173×150 mm)"
+            "Physical drawing area in millimetres. The default (170×150 mm)"
             " matches the safe SO101 workspace."
         ),
     )
@@ -110,6 +115,14 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         "--non-interactive",
         action="store_true",
         help="Read robot coordinates from stdin without prompts (three lines, origin/+X/+Y)",
+    )
+    parser.add_argument(
+        "--use-stage-default",
+        action="store_true",
+        help=(
+            "Skip prompts and write the baked-in Cal Hacks stage calibration. "
+            "Use this when the paper is taped in the standard pose shown in the runbook photo."
+        ),
     )
     return parser.parse_args(list(argv) if argv is not None else None)
 
@@ -157,7 +170,22 @@ def main(argv: Iterable[str] | None = None) -> int:
     )
     print("Position the pen on each pencil dot, then enter the XY pair here.")
 
-    if args.non_interactive:
+    if args.use_stage_default and args.non_interactive:
+        raise ValueError("--use-stage-default and --non-interactive are mutually exclusive")
+
+    if args.use_stage_default:
+        robot_points = np.array(
+            [
+                DEFAULT_STAGE_ORIGIN_MM,
+                DEFAULT_STAGE_X_POINT_MM,
+                DEFAULT_STAGE_Y_POINT_MM,
+            ],
+            dtype=np.float64,
+        )
+        print("Using baked stage coordinates (origin, +X, +Y) in millimetres:")
+        for label, point in zip(("origin", "+X", "+Y"), robot_points):
+            print(f"  {label:>6}: {point[0]:7.1f}, {point[1]:7.1f}")
+    elif args.non_interactive:
         robot_points = read_points_from_stdin()
     else:
         robot_points = gather_robot_points(("origin", "+X", "+Y"))

@@ -66,7 +66,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--page-width",
         type=float,
         default=SAFE_WORKSPACE_SIZE_MM[0],
-        help="Page width in the specified units (default: 173 mm)",
+        help="Page width in the specified units (default: 170 mm)",
     )
     parser.add_argument(
         "--page-height",

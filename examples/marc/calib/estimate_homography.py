@@ -108,7 +108,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Homography saved to {args.output.resolve()}")
     if args.overlay:
         print(f"Debug overlay saved to {args.overlay.resolve()}")
-    print("Use page_to_robot.py with the 173 mm × 150 mm workspace defaults before drawing.")
+    print("Use page_to_robot.py with the 170 mm × 150 mm workspace defaults before drawing.")
     return 0
 
 

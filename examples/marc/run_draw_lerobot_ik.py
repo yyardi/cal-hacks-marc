@@ -21,7 +21,14 @@ from .executor import (
     pick_marker,
     return_marker,
 )
-from .constants import SAFE_WORKSPACE_SIZE_M
+from .constants import (
+    DEFAULT_STAGE_DRAW_SPEED,
+    DEFAULT_STAGE_PICK_SPEED,
+    DEFAULT_STAGE_TRAVEL_SPEED,
+    DEFAULT_STAGE_Z_CONTACT,
+    DEFAULT_STAGE_Z_SAFE,
+    SAFE_WORKSPACE_SIZE_M,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +52,7 @@ def _parse_args() -> argparse.Namespace:
         "--page-width",
         type=float,
         default=SAFE_WORKSPACE_SIZE_M[0],
-        help="Drawing page width in meters (default: 0.173)",
+        help="Drawing page width in meters (default: 0.170)",
     )
     parser.add_argument(
         "--page-height",
@@ -53,11 +60,36 @@ def _parse_args() -> argparse.Namespace:
         default=SAFE_WORKSPACE_SIZE_M[1],
         help="Drawing page height in meters (default: 0.150)",
     )
-    parser.add_argument("--travel-speed", type=float, default=0.04, help="Travel speed in page units per second")
-    parser.add_argument("--draw-speed", type=float, default=0.02, help="Drawing speed in page units per second")
-    parser.add_argument("--pick-speed", type=float, default=0.015, help="Speed used when picking markers")
-    parser.add_argument("--z-contact", type=float, default=-0.01, help="Z height when the pen touches the page")
-    parser.add_argument("--z-safe", type=float, default=0.05, help="Safe Z height for travel")
+    parser.add_argument(
+        "--travel-speed",
+        type=float,
+        default=DEFAULT_STAGE_TRAVEL_SPEED,
+        help="Travel speed in page units per second",
+    )
+    parser.add_argument(
+        "--draw-speed",
+        type=float,
+        default=DEFAULT_STAGE_DRAW_SPEED,
+        help="Drawing speed in page units per second",
+    )
+    parser.add_argument(
+        "--pick-speed",
+        type=float,
+        default=DEFAULT_STAGE_PICK_SPEED,
+        help="Speed used when picking markers",
+    )
+    parser.add_argument(
+        "--z-contact",
+        type=float,
+        default=DEFAULT_STAGE_Z_CONTACT,
+        help="Z height when the pen touches the page",
+    )
+    parser.add_argument(
+        "--z-safe",
+        type=float,
+        default=DEFAULT_STAGE_Z_SAFE,
+        help="Safe Z height for travel",
+    )
     parser.add_argument("--pitch", type=float, default=-90.0, help="Pitch angle (degrees) of the wrist")
     parser.add_argument("--roll", type=float, default=0.0, help="Roll angle (degrees) of the wrist")
     parser.add_argument("--yaw", type=float, default=180.0, help="Yaw angle (degrees) of the wrist")
