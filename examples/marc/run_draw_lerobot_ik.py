@@ -11,6 +11,7 @@ from typing import Iterable
 
 import numpy as np
 
+from .calib.page_to_robot import stage_default_transform
 from .executor import (
     DriverCommand,
     ExecutorConfig,
@@ -20,6 +21,14 @@ from .executor import (
     expand_strokes,
     pick_marker,
     return_marker,
+)
+from .constants import (
+    DEFAULT_STAGE_DRAW_SPEED,
+    DEFAULT_STAGE_PICK_SPEED,
+    DEFAULT_STAGE_TRAVEL_SPEED,
+    DEFAULT_STAGE_Z_CONTACT,
+    DEFAULT_STAGE_Z_SAFE,
+    SAFE_WORKSPACE_SIZE_M,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,14 +48,57 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--plan", required=True, type=Path, help="Path to the JSON plan file")
     parser.add_argument("--port", required=True, help="Serial port of the SO100 follower")
     parser.add_argument("--urdf", required=True, type=Path, help="Path to the follower URDF file")
-    parser.add_argument("--homography", required=True, type=Path, help="Homography mapping page to robot")
-    parser.add_argument("--page-width", type=float, required=True, help="Drawing page width in meters")
-    parser.add_argument("--page-height", type=float, required=True, help="Drawing page height in meters")
-    parser.add_argument("--travel-speed", type=float, default=0.04, help="Travel speed in page units per second")
-    parser.add_argument("--draw-speed", type=float, default=0.02, help="Drawing speed in page units per second")
-    parser.add_argument("--pick-speed", type=float, default=0.015, help="Speed used when picking markers")
-    parser.add_argument("--z-contact", type=float, default=-0.01, help="Z height when the pen touches the page")
-    parser.add_argument("--z-safe", type=float, default=0.05, help="Safe Z height for travel")
+    parser.add_argument("--homography", type=Path, help="Homography mapping page to robot")
+    parser.add_argument(
+        "--use-stage-default",
+        action="store_true",
+        help=(
+            "Use the baked Cal Hacks stage calibration instead of supplying a homography file. "
+            "Matches the jogged origin/+X/+Y values documented in the README."
+        ),
+    )
+    parser.add_argument(
+        "--page-width",
+        type=float,
+        default=SAFE_WORKSPACE_SIZE_M[0],
+        help=f"Drawing page width in meters (default: {SAFE_WORKSPACE_SIZE_M[0]:.3f})",
+    )
+    parser.add_argument(
+        "--page-height",
+        type=float,
+        default=SAFE_WORKSPACE_SIZE_M[1],
+        help=f"Drawing page height in meters (default: {SAFE_WORKSPACE_SIZE_M[1]:.3f})",
+    )
+    parser.add_argument(
+        "--travel-speed",
+        type=float,
+        default=DEFAULT_STAGE_TRAVEL_SPEED,
+        help="Travel speed in page units per second",
+    )
+    parser.add_argument(
+        "--draw-speed",
+        type=float,
+        default=DEFAULT_STAGE_DRAW_SPEED,
+        help="Drawing speed in page units per second",
+    )
+    parser.add_argument(
+        "--pick-speed",
+        type=float,
+        default=DEFAULT_STAGE_PICK_SPEED,
+        help="Speed used when picking markers",
+    )
+    parser.add_argument(
+        "--z-contact",
+        type=float,
+        default=DEFAULT_STAGE_Z_CONTACT,
+        help="Z height when the pen touches the page",
+    )
+    parser.add_argument(
+        "--z-safe",
+        type=float,
+        default=DEFAULT_STAGE_Z_SAFE,
+        help="Safe Z height for travel",
+    )
     parser.add_argument("--pitch", type=float, default=-90.0, help="Pitch angle (degrees) of the wrist")
     parser.add_argument("--roll", type=float, default=0.0, help="Roll angle (degrees) of the wrist")
     parser.add_argument("--yaw", type=float, default=180.0, help="Yaw angle (degrees) of the wrist")
@@ -130,9 +182,43 @@ def _load_raster(path: Path) -> np.ndarray:
     return np.asarray(image.convert("RGB"))
 
 
+def _validate_plan_bounds(color_plans: list[ColorPlan], page_width: float, page_height: float) -> None:
+    """Ensure all stroke points lie within the configured workspace."""
+
+    max_x = max(
+        (point[0] for plan in color_plans for stroke in plan.strokes for point in stroke.points),
+        default=0.0,
+    )
+    max_y = max(
+        (point[1] for plan in color_plans for stroke in plan.strokes for point in stroke.points),
+        default=0.0,
+    )
+    min_x = min(
+        (point[0] for plan in color_plans for stroke in plan.strokes for point in stroke.points),
+        default=0.0,
+    )
+    min_y = min(
+        (point[1] for plan in color_plans for stroke in plan.strokes for point in stroke.points),
+        default=0.0,
+    )
+
+    eps = 1e-6
+    if min_x < -eps or min_y < -eps or max_x > page_width + eps or max_y > page_height + eps:
+        raise ValueError(
+            "Plan coordinates fall outside the configured workspace (expected 0 ≤ x ≤ %.3f, 0 ≤ y ≤ %.3f)."
+            " Regenerate the plan with the --page-width/--page-height values listed in README.md"
+            " or adjust your SVG scaling before running the executor." % (page_width, page_height)
+        )
+
+
 def main() -> None:
     args = _parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
+
+    if args.homography is None and not args.use_stage_default:
+        raise SystemExit("--homography is required unless --use-stage-default is set")
+    if args.homography is not None and args.use_stage_default:
+        raise SystemExit("--use-stage-default cannot be combined with --homography")
 
     (plan_width, plan_height), color_plans = _load_plan(args.plan)
     if not np.isclose(plan_width, args.page_width) or not np.isclose(plan_height, args.page_height):
@@ -143,6 +229,7 @@ def main() -> None:
             args.page_width,
             args.page_height,
         )
+    _validate_plan_bounds(color_plans, args.page_width, args.page_height)
 
     executor_cfg = ExecutorConfig(
         travel_speed=args.travel_speed,
@@ -159,14 +246,24 @@ def main() -> None:
     if args.marker_config:
         executor_cfg.marker_slots = _load_marker_config(args.marker_config)
 
+    driver_kwargs: dict[str, object]
+    if args.use_stage_default:
+        stage_transform = stage_default_transform(
+            (args.page_width * 1000.0, args.page_height * 1000.0)
+        )
+        driver_kwargs = {"page_to_robot_matrix": stage_transform.matrix}
+        logger.info("Using baked stage calibration for page-to-robot transform")
+    else:
+        driver_kwargs = {"homography_path": args.homography}
+
     driver = SO100Driver(
         port=args.port,
         urdf_path=args.urdf,
-        homography_path=args.homography,
         camera_homography_path=args.camera_homography,
         page_size=(args.page_width, args.page_height),
         executor_cfg=executor_cfg,
         base_pose=args.base_pose,
+        **driver_kwargs,
     )
 
     with driver.session(calibrate=args.calibrate) as session:
