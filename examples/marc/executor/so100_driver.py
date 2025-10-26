@@ -138,10 +138,11 @@ class SO100Driver:
         self.dt = 1.0 / float(self.cfg.command_rate_hz)
         self.base_pose = np.array(base_pose, dtype=float)
         if not self.robot.calibration:
+            follower_id = self.robot_cfg.id or "default"
             logger.info(
-                "No follower calibration file found for id '%s'. The first connection will "
-                "run the interactive calibration routine.",
-                self.robot_cfg.id or "default",
+                "No follower calibration found for id '%s'. The driver will run the interactive "
+                "routine the first time you connect and cache the offsets for future runs.",
+                follower_id,
             )
 
     # ------------------------------------------------------------------
@@ -164,22 +165,36 @@ class SO100Driver:
         """Connect to the follower arm and cache its current configuration."""
 
         logger.info("Connecting to SO100 follower on %s", self.port)
-        need_calibration = calibrate or not self.robot.calibration
-        if need_calibration and not calibrate:
+        follower_id = self.robot_cfg.id or "default"
+        auto_calibrate = False
+        if calibrate:
+            if self.robot.calibration:
+                logger.info(
+                    "Re-running follower calibration for id '%s' as requested.",
+                    follower_id,
+                )
+            else:
+                logger.info(
+                    "Running follower calibration for id '%s' to register the offsets.",
+                    follower_id,
+                )
+        elif not self.robot.calibration:
             logger.info(
-                "Forcing follower calibration because no offsets are registered for id '%s'",
-                self.robot_cfg.id or "default",
+                "No cached follower calibration for id '%s'. Launching the interactive routine "
+                "now; future runs can skip --calibrate.",
+                follower_id,
             )
-        self.robot.connect(calibrate=need_calibration)
+            auto_calibrate = True
+
+        self.robot.connect(calibrate=calibrate or auto_calibrate)
         try:
             obs = self.robot.get_observation()
         except RuntimeError as exc:  # pragma: no cover - hardware failure handling
             message = str(exc)
             if "has no calibration registered" in message:
                 raise RuntimeError(
-                    "Follower motors report missing calibration. Re-run with --calibrate or "
-                    "set --follower-calibration-dir to the directory containing the saved "
-                    "JSON produced by the calibration helper."
+                    "Follower motors report missing calibration. Re-run with --calibrate (or set "
+                    "--follower-calibration-dir to point at the saved JSON) before drawing."
                 ) from exc
             raise
         joints = np.array([float(obs[f"{name}.pos"]) for name in self.motor_names], dtype=float)

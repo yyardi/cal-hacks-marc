@@ -146,7 +146,7 @@ all-in-one helper? Skip ahead to the note after step 6 for the
    python -m examples.marc.run_draw_test_square \
      --port /dev/tty.usbmodem12345601 \
      --urdf /absolute/path/to/so101_new_calib.urdf \
-     --square-size-mm 110 --margin-mm 12 --calibrate
+     --square-size-mm 110 --margin-mm 12
    ```
 
    On the Cal Hacks rig you can also skip file IO entirely by passing `--use-stage-default`, which injects the
@@ -157,18 +157,18 @@ all-in-one helper? Skip ahead to the note after step 6 for the
      --port /dev/tty.usbmodem12345601 \
      --urdf /absolute/path/to/so101_new_calib.urdf \
      --use-stage-default \
-     --square-size-mm 110 --margin-mm 12 --calibrate
+     --square-size-mm 110 --margin-mm 12
    ```
    The script moves gently and leaves a square centred on the page bounds the homography identified. If
    the square is skewed or off-centre, redo the jog calibration or camera photo before attempting a full
    drawing.
 
-   The square helper (and the full drawing CLI below) now default to storing the follower calibration under
-   `~/.cache/huggingface/lerobot/calibration/robots/so100_follower/marc_so101.json`. The first time you
-   connect without a saved JSON the driver will automatically run the interactive calibration routine so the
-   motors know their offsets. To keep multiple rigs separate, pass `--follower-id <name>`; add
-   `--follower-calibration-dir <path>` if you prefer to keep the calibration JSON alongside the repo instead of
-   the global cache.
+   The square helper (and the full drawing CLI below) default to storing the follower calibration under
+   `~/.cache/huggingface/lerobot/calibration/robots/so100_follower/marc_so101.json`. If that file is missing,
+   the driver automatically launches the interactive calibration routine on connect and reuses the cached
+   offsets on future runs. Pass `--calibrate` whenever you want to re-run the routine manually. To keep
+   multiple rigs separate, pass `--follower-id <name>`; add `--follower-calibration-dir <path>` if you prefer
+   to keep the calibration JSON alongside the repo instead of the global cache.
 
 6. **Stream the plan to the arm at gentle speeds**
    ```bash
@@ -178,8 +178,7 @@ all-in-one helper? Skip ahead to the note after step 6 for the
      --urdf /absolute/path/to/so101_new_calib.urdf \
      --page-width 0.173 --page-height 0.150 \
      --z-contact -0.028 --z-safe 0.05 \
-     --pitch -90 --roll 0 --yaw 180 \
-     --calibrate
+     --pitch -90 --roll 0 --yaw 180
    ```
 
    To collapse the entire prompt → draw workflow into one command, run:
@@ -197,10 +196,10 @@ all-in-one helper? Skip ahead to the note after step 6 for the
   to reuse the artefacts in `examples/marc/out` and jump straight to validation and
   streaming.
 
-  The CLI shares the same calibration defaults as `run_draw_lerobot_ik`. If the follower offsets are missing it
-  will prompt for calibration once and then reuse the saved JSON on future runs. Use `--follower-id` and
-  `--follower-calibration-dir` here too if you need to manage multiple hardware setups or relocate the
-  calibration files.
+  The CLI shares the same calibration defaults as `run_draw_lerobot_ik`. On a fresh setup it will launch the
+  calibration flow automatically; add `--calibrate` when you want to refresh the offsets manually. Use
+  `--follower-id` and `--follower-calibration-dir` here too if you need to manage multiple hardware setups or
+  relocate the calibration files.
 
   Add `--skip-draw` (or omit `--port`/`--urdf`) to stop after generating the
   plan. The helper shares the same auto-scaling diagnostics as
