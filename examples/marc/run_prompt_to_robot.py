@@ -90,6 +90,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pen-up-threshold", type=float, default=10.0, help="Distance threshold for inserting pen-up moves")
 
     parser.add_argument("--skip-draw", action="store_true", help="Stop after writing the plan JSON")
+    parser.add_argument(
+        "--reuse-intermediates",
+        action="store_true",
+        help="Reuse existing PNG/SVG/plan artefacts for the slug instead of regenerating them",
+    )
     parser.add_argument("--port", help="Serial port of the SO100 follower")
     parser.add_argument("--urdf", type=Path, help="Path to the follower URDF file")
     parser.add_argument("--homography", type=Path, help="Page-to-robot homography file")
@@ -200,70 +205,90 @@ def main(argv: Sequence[str] | None = None) -> int:
     simplified_svg_path = output_dir / f"{slug}-simplified.svg"
     plan_path = output_dir / f"{slug}_plan.json"
 
-    LOGGER.info("Generating raster for prompt '%s'", args.prompt)
-    generate_image(
-        prompt=args.prompt,
-        output_path=png_path,
-        model_id=args.model_id,
-        fallback_model_id=args.fallback_model_id,
-        negative_prompt=args.negative_prompt,
-        num_inference_steps=args.num_inference_steps,
-        guidance_scale=args.guidance_scale,
-        height=args.height,
-        width=args.width,
-        seed=args.seed,
-    )
-    LOGGER.info("Raster written to %s", png_path)
+    unit_scale = planner_module._unit_scale(args.unit, args.dpi)
+
+    plan: dict | None = None
+    if args.reuse_intermediates and plan_path.exists():
+        LOGGER.info("Reusing existing plan at %s", plan_path)
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+
+    if plan is None:
+        if args.reuse_intermediates and png_path.exists():
+            LOGGER.info("Reusing existing raster at %s", png_path)
+        else:
+            LOGGER.info("Generating raster for prompt '%s'", args.prompt)
+            generate_image(
+                prompt=args.prompt,
+                output_path=png_path,
+                model_id=args.model_id,
+                fallback_model_id=args.fallback_model_id,
+                negative_prompt=args.negative_prompt,
+                num_inference_steps=args.num_inference_steps,
+                guidance_scale=args.guidance_scale,
+                height=args.height,
+                width=args.width,
+                seed=args.seed,
+            )
+            LOGGER.info("Raster written to %s", png_path)
 
     page_size = None
     if args.page_width and args.page_height:
         page_size = (float(args.page_width), float(args.page_height))
 
-    LOGGER.info("Vectorising raster with Potrace")
-    trace_bitmap_to_svg(
-        png_path,
-        svg_path,
-        threshold=args.threshold,
-        turdsize=args.turdsize,
-        opt_tolerance=args.opt_tolerance,
-        page_size=page_size,
-    )
-    LOGGER.info("SVG written to %s", svg_path)
-
     svg_for_planning = svg_path
-    if not args.no_simplify:
-        LOGGER.info("Simplifying SVG geometry")
-        simplify_svg_file(svg_path, simplified_svg_path, tolerance=args.simplify_tolerance)
-        LOGGER.info("Simplified SVG written to %s", simplified_svg_path)
-        svg_for_planning = simplified_svg_path
+    if plan is None:
+        if args.reuse_intermediates and svg_path.exists():
+            LOGGER.info("Reusing existing SVG at %s", svg_path)
+        else:
+            LOGGER.info("Vectorising raster with Potrace")
+            trace_bitmap_to_svg(
+                png_path,
+                svg_path,
+                threshold=args.threshold,
+                turdsize=args.turdsize,
+                opt_tolerance=args.opt_tolerance,
+                page_size=page_size,
+            )
+            LOGGER.info("SVG written to %s", svg_path)
 
-    LOGGER.info("Sampling SVG paths into strokes")
-    strokes = plan_svg_vectors(
-        svg_for_planning,
-        step=args.step,
-        min_samples=args.min_samples,
-        merge_distance=args.merge_distance,
-        pen_up_threshold=args.pen_up_threshold,
-    )
+        if not args.no_simplify:
+            if args.reuse_intermediates and simplified_svg_path.exists():
+                LOGGER.info("Reusing simplified SVG at %s", simplified_svg_path)
+            else:
+                LOGGER.info("Simplifying SVG geometry")
+                simplify_svg_file(svg_path, simplified_svg_path, tolerance=args.simplify_tolerance)
+                LOGGER.info("Simplified SVG written to %s", simplified_svg_path)
+            svg_for_planning = simplified_svg_path
 
-    unit_scale = planner_module._unit_scale(args.unit, args.dpi)
-    LOGGER.info(
-        "Fitting drawing to %.2f×%.2f %s page with %.2f %s margin",
-        args.page_width,
-        args.page_height,
-        args.unit,
-        args.margin,
-        args.unit,
-    )
-    plan = build_plan(
-        strokes,
-        page_width=args.page_width,
-        page_height=args.page_height,
-        scale=unit_scale,
-        margin=args.margin,
-    )
-    _write_json(plan_path, plan)
-    LOGGER.info("Plan written to %s", plan_path)
+        LOGGER.info("Sampling SVG paths into strokes")
+        strokes = plan_svg_vectors(
+            svg_for_planning,
+            step=args.step,
+            min_samples=args.min_samples,
+            merge_distance=args.merge_distance,
+            pen_up_threshold=args.pen_up_threshold,
+        )
+
+        LOGGER.info(
+            "Fitting drawing to %.2f×%.2f %s page with %.2f %s margin",
+            args.page_width,
+            args.page_height,
+            args.unit,
+            args.margin,
+            args.unit,
+        )
+        plan = build_plan(
+            strokes,
+            page_width=args.page_width,
+            page_height=args.page_height,
+            scale=unit_scale,
+            margin=args.margin,
+        )
+        _write_json(plan_path, plan)
+        LOGGER.info("Plan written to %s", plan_path)
+
+    if plan is None:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
 
     metadata = plan.get("metadata", {})
     geometry = metadata.get("geometry", {})

@@ -175,12 +175,16 @@ all-in-one helper? Skip ahead to the note after step 6 for the
      --port /dev/tty.usbmodem12345601 \
      --urdf /absolute/path/to/so101_new_calib.urdf \
      --page-width 173 --page-height 150 --unit mm --margin 5
-   ```
+  ```
 
-   Add `--skip-draw` (or omit `--port`/`--urdf`) to stop after generating the
-   plan. The helper shares the same auto-scaling diagnostics as
-   `examples.marc.planner.make_plan` and then streams the validated plan to the
-   arm.
+  Already generated the PNG/SVG/plan trio for that slug? Add `--reuse-intermediates`
+  to reuse the artefacts in `examples/marc/out` and jump straight to validation and
+  streaming.
+
+  Add `--skip-draw` (or omit `--port`/`--urdf`) to stop after generating the
+  plan. The helper shares the same auto-scaling diagnostics as
+  `examples.marc.planner.make_plan` and then streams the validated plan to the
+  arm.
 
    The executor falls back to `examples/marc/out/calib_page_to_robot.npy` when `--homography` is omitted.
    If you need to point at a different calibration file, pass `--homography /path/to/transform.npy`. To
