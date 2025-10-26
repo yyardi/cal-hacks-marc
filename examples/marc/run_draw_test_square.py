@@ -15,7 +15,10 @@ from .constants import (
     DEFAULT_STAGE_Z_SAFE,
     SAFE_WORKSPACE_SIZE_MM,
 )
+<<<<<<< codex/set-drawing-limits-to-173x150-mm
 from .calib.page_to_robot import stage_default_transform
+=======
+>>>>>>> main
 from .executor import (
     ExecutorConfig,
     MOVE_TO,
@@ -47,13 +50,21 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         "--page-width-mm",
         type=float,
         default=SAFE_WORKSPACE_SIZE_MM[0],
+<<<<<<< codex/set-drawing-limits-to-173x150-mm
         help=f"Physical drawing width in millimetres (default: {SAFE_WORKSPACE_SIZE_MM[0]:.0f} mm)",
+=======
+        help="Physical drawing width in millimetres (default: 170 mm)",
+>>>>>>> main
     )
     parser.add_argument(
         "--page-height-mm",
         type=float,
         default=SAFE_WORKSPACE_SIZE_MM[1],
+<<<<<<< codex/set-drawing-limits-to-173x150-mm
         help=f"Physical drawing height in millimetres (default: {SAFE_WORKSPACE_SIZE_MM[1]:.0f} mm)",
+=======
+        help="Physical drawing height in millimetres (default: 150 mm)",
+>>>>>>> main
     )
     parser.add_argument(
         "--square-size-mm",
