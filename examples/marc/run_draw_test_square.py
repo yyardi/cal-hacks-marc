@@ -15,6 +15,7 @@ from .constants import (
     DEFAULT_STAGE_Z_SAFE,
     SAFE_WORKSPACE_SIZE_MM,
 )
+from .calib.page_to_robot import stage_default_transform
 from .executor import (
     ExecutorConfig,
     MOVE_TO,
@@ -31,21 +32,36 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--urdf", required=True, type=Path, help="Path to the SO101 URDF file")
     parser.add_argument(
         "--page-to-robot",
-        required=True,
         type=Path,
         help="Rigid transform .npy produced by calib.page_to_robot",
     )
     parser.add_argument(
+        "--use-stage-default",
+        action="store_true",
+        help=(
+            "Use the baked Cal Hacks stage calibration instead of loading a file. "
+            "This matches the origin/+X/+Y jog described in the README."
+        ),
+    )
+    default_page_width_mm = float(SAFE_WORKSPACE_SIZE_MM[0])
+    default_page_height_mm = float(SAFE_WORKSPACE_SIZE_MM[1])
+    parser.add_argument(
         "--page-width-mm",
         type=float,
-        default=SAFE_WORKSPACE_SIZE_MM[0],
-        help="Physical drawing width in millimetres (default: 170 mm)",
+        default=default_page_width_mm,
+        help=(
+            "Physical drawing width in millimetres (default: "
+            f"{default_page_width_mm:.0f} mm)"
+        ),
     )
     parser.add_argument(
         "--page-height-mm",
         type=float,
-        default=SAFE_WORKSPACE_SIZE_MM[1],
-        help="Physical drawing height in millimetres (default: 150 mm)",
+        default=default_page_height_mm,
+        help=(
+            "Physical drawing height in millimetres (default: "
+            f"{default_page_height_mm:.0f} mm)"
+        ),
     )
     parser.add_argument(
         "--square-size-mm",
@@ -129,6 +145,11 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
+    if args.page_to_robot is None and not args.use_stage_default:
+        raise SystemExit("--page-to-robot is required unless --use-stage-default is set")
+    if args.page_to_robot is not None and args.use_stage_default:
+        raise SystemExit("--use-stage-default cannot be combined with --page-to-robot")
+
     page_width_m = args.page_width_mm / 1000.0
     page_height_m = args.page_height_mm / 1000.0
     page_size_m = (page_width_m, page_height_m)
@@ -150,12 +171,20 @@ def main(argv: Iterable[str] | None = None) -> int:
         yaw_deg=args.yaw,
     )
 
+    driver_kwargs: dict[str, object]
+    if args.use_stage_default:
+        transform = stage_default_transform((args.page_width_mm, args.page_height_mm))
+        driver_kwargs = {"page_to_robot_matrix": transform.matrix}
+        logging.info("Using baked stage calibration for page-to-robot transform")
+    else:
+        driver_kwargs = {"homography_path": args.page_to_robot}
+
     driver = SO100Driver(
         port=args.port,
         urdf_path=args.urdf,
-        homography_path=args.page_to_robot,
         page_size=page_size_m,
         executor_cfg=cfg,
+        **driver_kwargs,
     )
 
     logging.info(

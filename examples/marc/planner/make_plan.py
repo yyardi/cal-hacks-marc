@@ -62,17 +62,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("svg", type=Path, help="Input SVG to convert into a robot plan")
     parser.add_argument("--output", type=Path, required=True, help="Destination JSON file")
+    default_page_width_mm = float(SAFE_WORKSPACE_SIZE_MM[0])
+    default_page_height_mm = float(SAFE_WORKSPACE_SIZE_MM[1])
     parser.add_argument(
         "--page-width",
         type=float,
-        default=SAFE_WORKSPACE_SIZE_MM[0],
-        help="Page width in the specified units (default: 170 mm)",
+        default=default_page_width_mm,
+        help=(
+            "Page width in the specified units (default: "
+            f"{default_page_width_mm:.0f} mm)"
+        ),
     )
     parser.add_argument(
         "--page-height",
         type=float,
-        default=SAFE_WORKSPACE_SIZE_MM[1],
-        help="Page height in the specified units (default: 150 mm)",
+        default=default_page_height_mm,
+        help=(
+            "Page height in the specified units (default: "
+            f"{default_page_height_mm:.0f} mm)"
+        ),
     )
     parser.add_argument(
         "--unit",
