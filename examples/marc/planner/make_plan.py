@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Mapping, Sequence
 
 from . import OrderedStroke, color_to_hex
+from ..constants import SAFE_WORKSPACE_SIZE_MM
 from .vector_planning import plan_svg_vectors
 
 
@@ -61,8 +62,26 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("svg", type=Path, help="Input SVG to convert into a robot plan")
     parser.add_argument("--output", type=Path, required=True, help="Destination JSON file")
-    parser.add_argument("--page-width", type=float, default=215.9, help="Page width in the specified units (default: 215.9)")
-    parser.add_argument("--page-height", type=float, default=279.4, help="Page height in the specified units (default: 279.4)")
+    default_page_width_mm = float(SAFE_WORKSPACE_SIZE_MM[0])
+    default_page_height_mm = float(SAFE_WORKSPACE_SIZE_MM[1])
+    parser.add_argument(
+        "--page-width",
+        type=float,
+        default=default_page_width_mm,
+        help=(
+            "Page width in the specified units (default: "
+            f"{default_page_width_mm:.0f} mm)"
+        ),
+    )
+    parser.add_argument(
+        "--page-height",
+        type=float,
+        default=default_page_height_mm,
+        help=(
+            "Page height in the specified units (default: "
+            f"{default_page_height_mm:.0f} mm)"
+        ),
+    )
     parser.add_argument(
         "--unit",
         choices=["mm", "cm", "in", "px"],
