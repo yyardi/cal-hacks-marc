@@ -117,21 +117,26 @@ printed by `run_svg` and fill in the port/paths that match your setup.
       note the follower’s XY readout in metres (the teleop helper prints three decimals). If you are using the Cal Hacks demo rig, you can skip
       manual entry entirely with `--use-stage-default` to reuse the baked coordinates. The stage setup maps
       `(0, 0) → (0.195, -0.084)` m, `(page_width, 0) → (0.368, -0.073)` m, and `(0, page_height) → (0.185, 0.066)` m.
+      Running with `--use-stage-default` still writes `examples/marc/out/calib_page_to_robot.npy` so every
+      downstream CLI can pick up the same transform automatically.
    3. Enter those three XY pairs when the calibration script prompts for origin, +X, and +Y (or rely on the
       baked defaults). The stored `.npy` file is the rigid transform from page metres into robot
       metres, solved via a two-point Procrustes fit (rotation + translation only).
 
 5. **(Optional but recommended) Run the hardware test square**
-   Before streaming a prompt-driven plan, draw a centred square to confirm the calibration envelope:
+   Before streaming a prompt-driven plan, draw a centred square to confirm the calibration envelope. The
+   CLI automatically looks for `examples/marc/out/calib_page_to_robot.npy`, so you only need extra flags if
+   you saved your transform elsewhere:
+
    ```bash
    python -m examples.marc.run_draw_test_square \
      --port /dev/tty.usbmodem12345601 \
      --urdf /absolute/path/to/so101_new_calib.urdf \
-     --page-to-robot examples/marc/out/calib_page_to_robot.npy \
      --square-size-mm 110 --margin-mm 12 --calibrate
+   ```
 
-   If you are running on the Cal Hacks rig and skipped manual entry, add `--use-stage-default` instead of
-   `--page-to-robot` and the script will inject the baked transform automatically:
+   On the Cal Hacks rig you can also skip file IO entirely by passing `--use-stage-default`, which injects the
+   baked coordinates gathered from the stage photo:
 
    ```bash
    python -m examples.marc.run_draw_test_square \
@@ -139,7 +144,6 @@ printed by `run_svg` and fill in the port/paths that match your setup.
      --urdf /absolute/path/to/so101_new_calib.urdf \
      --use-stage-default \
      --square-size-mm 110 --margin-mm 12 --calibrate
-   ```
    ```
    The script moves gently and leaves a square centred on the page bounds the homography identified. If
    the square is skewed or off-centre, redo the jog calibration or camera photo before attempting a full
@@ -151,27 +155,15 @@ printed by `run_svg` and fill in the port/paths that match your setup.
      --plan examples/marc/out/<slug>_plan.json \
      --port /dev/tty.usbmodem12345601 \
      --urdf /absolute/path/to/so101_new_calib.urdf \
-     --homography examples/marc/out/calib_page_to_robot.npy \
-     --page-width 0.173 --page-height 0.150 \
-     --z-contact -0.028 --z-safe 0.05 \
-     --pitch -90 --roll 0 --yaw 180 \
-     --calibrate
-
-   On the stage setup, replace `--homography …` with `--use-stage-default` to stream the baked transform without
-   writing or loading a file:
-
-   ```bash
-   python -m examples.marc.run_draw_lerobot_ik \
-     --plan examples/marc/out/<slug>_plan.json \
-     --port /dev/tty.usbmodem12345601 \
-     --urdf /absolute/path/to/so101_new_calib.urdf \
-     --use-stage-default \
      --page-width 0.173 --page-height 0.150 \
      --z-contact -0.028 --z-safe 0.05 \
      --pitch -90 --roll 0 --yaw 180 \
      --calibrate
    ```
-   ```
+
+   The executor falls back to `examples/marc/out/calib_page_to_robot.npy` when `--homography` is omitted.
+   If you need to point at a different calibration file, pass `--homography /path/to/transform.npy`. To
+   reuse the baked stage measurements, add `--use-stage-default` instead of a file path.
    Swap the port for whatever your OS reports. The driver mirrors the IK routine from `teleoperate.py`
    and streams poses at 15 Hz with 2 cm/s travel and 1 cm/s draw speeds to stay well within the SO101’s
    comfortable region.

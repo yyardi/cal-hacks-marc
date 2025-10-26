@@ -11,7 +11,10 @@ from typing import Iterable
 
 import numpy as np
 
-from .calib.page_to_robot import stage_default_transform
+from .calib.page_to_robot import (
+    OUTPUT_PATH as DEFAULT_CALIBRATION_PATH,
+    stage_default_transform,
+)
 from .executor import (
     DriverCommand,
     ExecutorConfig,
@@ -48,7 +51,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--plan", required=True, type=Path, help="Path to the JSON plan file")
     parser.add_argument("--port", required=True, help="Serial port of the SO100 follower")
     parser.add_argument("--urdf", required=True, type=Path, help="Path to the follower URDF file")
-    parser.add_argument("--homography", type=Path, help="Homography mapping page to robot")
+    parser.add_argument(
+        "--homography",
+        type=Path,
+        help=(
+            "Homography mapping page to robot. If omitted the command looks for "
+            "examples/marc/out/calib_page_to_robot.npy."
+        ),
+    )
     parser.add_argument(
         "--use-stage-default",
         action="store_true",
@@ -223,10 +233,11 @@ def main() -> None:
     args = _parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    if args.homography is None and not args.use_stage_default:
-        raise SystemExit("--homography is required unless --use-stage-default is set")
-    if args.homography is not None and args.use_stage_default:
-        raise SystemExit("--use-stage-default cannot be combined with --homography")
+    if args.use_stage_default and args.homography:
+        logger.warning(
+            "--use-stage-default supplied; ignoring explicit --homography path %s",
+            args.homography,
+        )
 
     (plan_width, plan_height), color_plans = _load_plan(args.plan)
     if not np.isclose(plan_width, args.page_width) or not np.isclose(plan_height, args.page_height):
@@ -262,7 +273,15 @@ def main() -> None:
         driver_kwargs = {"page_to_robot_matrix": stage_transform.matrix}
         logger.info("Using baked stage calibration for page-to-robot transform")
     else:
-        driver_kwargs = {"homography_path": args.homography}
+        homography_path = args.homography or DEFAULT_CALIBRATION_PATH
+        if not homography_path.exists():
+            raise SystemExit(
+                "Calibration file not found at %s. Run `python -m examples.marc.calib.page_to_robot` "
+                "to generate it or rerun this command with --use-stage-default to rely on the baked "
+                "Cal Hacks transform."
+                % homography_path
+            )
+        driver_kwargs = {"homography_path": homography_path}
 
     driver = SO100Driver(
         port=args.port,

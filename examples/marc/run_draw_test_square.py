@@ -15,6 +15,7 @@ from .constants import (
     DEFAULT_STAGE_Z_SAFE,
     SAFE_WORKSPACE_SIZE_MM,
 )
+from .calib.page_to_robot import OUTPUT_PATH as DEFAULT_CALIBRATION_PATH
 from .calib.page_to_robot import stage_default_transform
 from .executor import (
     ExecutorConfig,
@@ -33,8 +34,21 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--page-to-robot",
         type=Path,
-        help="Rigid transform .npy produced by calib.page_to_robot",
+        help=(
+            "Rigid transform .npy produced by calib.page_to_robot. "
+            "If omitted the command looks for examples/marc/out/calib_page_to_robot.npy."
+        ),
     )
+    parser.add_argument(
+        "--use-stage-default",
+        action="store_true",
+        help=(
+            "Use the baked Cal Hacks stage calibration instead of loading a file. "
+            "This matches the origin/+X/+Y jog described in the README."
+        ),
+    )
+    default_page_width_mm = float(SAFE_WORKSPACE_SIZE_MM[0])
+    default_page_height_mm = float(SAFE_WORKSPACE_SIZE_MM[1])
     parser.add_argument(
         "--use-stage-default",
         action="store_true",
@@ -145,10 +159,23 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = _parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    if args.page_to_robot is None and not args.use_stage_default:
-        raise SystemExit("--page-to-robot is required unless --use-stage-default is set")
-    if args.page_to_robot is not None and args.use_stage_default:
-        raise SystemExit("--use-stage-default cannot be combined with --page-to-robot")
+    if args.use_stage_default and args.page_to_robot:
+        logging.warning(
+            "--use-stage-default supplied; ignoring explicit --page-to-robot path %s",
+            args.page_to_robot,
+        )
+    calibration_path: Path | None
+    if args.use_stage_default:
+        calibration_path = None
+    else:
+        calibration_path = args.page_to_robot or DEFAULT_CALIBRATION_PATH
+    if calibration_path is not None and not calibration_path.exists():
+        raise SystemExit(
+            "Calibration file not found at %s. Run `python -m examples.marc.calib.page_to_robot` "
+            "to generate it or rerun this command with --use-stage-default to rely on the baked "
+            "Cal Hacks transform."
+            % calibration_path
+        )
 
     page_width_m = args.page_width_mm / 1000.0
     page_height_m = args.page_height_mm / 1000.0
@@ -177,7 +204,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         driver_kwargs = {"page_to_robot_matrix": transform.matrix}
         logging.info("Using baked stage calibration for page-to-robot transform")
     else:
-        driver_kwargs = {"homography_path": args.page_to_robot}
+        driver_kwargs = {"homography_path": calibration_path}
 
     driver = SO100Driver(
         port=args.port,
