@@ -911,7 +911,7 @@ def main():
             analysis, 
             z_contact, 
             z_safe,
-            pitch=0.0,
+            pitch=0.3,
             min_threshold=min_threshold
         )
         
