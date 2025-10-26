@@ -332,7 +332,7 @@ def read_and_print_angles(robot: Robot):
 def main():
 
     # Create the robot and teleoperator configurations
-    robot_config = SO100FollowerConfig(port="COM6", id="frida_bot", use_degrees=True) # use_degrees=True is very important
+    robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem5A7A0187541", id="marc", use_degrees=True) # use_degrees=True is very important
     # teleop_arm_config = SO100LeaderConfig(port="COM6", id="my_awesome_leader_arm")
     keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 

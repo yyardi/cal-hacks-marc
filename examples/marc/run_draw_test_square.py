@@ -50,6 +50,16 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     default_page_width_mm = float(SAFE_WORKSPACE_SIZE_MM[0])
     default_page_height_mm = float(SAFE_WORKSPACE_SIZE_MM[1])
     parser.add_argument(
+        "--use-stage-default",
+        action="store_true",
+        help=(
+            "Use the baked Cal Hacks stage calibration instead of loading a file. "
+            "This matches the origin/+X/+Y jog described in the README."
+        ),
+    )
+    default_page_width_mm = float(SAFE_WORKSPACE_SIZE_MM[0])
+    default_page_height_mm = float(SAFE_WORKSPACE_SIZE_MM[1])
+    parser.add_argument(
         "--page-width-mm",
         type=float,
         default=default_page_width_mm,
