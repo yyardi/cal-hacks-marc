@@ -70,20 +70,15 @@ from lerobot.robots.so100_follower import SO100Follower, SO100FollowerConfig
 from lerobot.teleoperators.keyboard.teleop_keyboard import KeyboardTeleop, KeyboardTeleopConfig
 from lerobot.teleoperators.so100_leader import SO100Leader, SO100LeaderConfig
 from lerobot.utils.robot_utils import busy_wait
-# ``init_rerun`` landed in lerobot 0.3.0. Older releases shipped the same helper
-# script but without the visualization bootstrap. Import it defensively so the
-# keyboard teleop keeps working even when the installed lerobot wheel is older
-# than the repo checkout.
+# --- make the rerun viewer optional -----------------------------------------
 try:
     from lerobot.utils.visualization_utils import init_rerun
-except (ImportError, AttributeError):
-    def init_rerun(session_name: str = "so100_ik") -> None:
-        """Fallback no-op when rerun support is unavailable."""
+except Exception:
+    def init_rerun(session_name: str = "lerobot_control_loop") -> None:
+        # No viewer available; proceed without it.
+        return
+# ----------------------------------------------------------------------------
 
-        print(
-            "[teleoperate] Rerun visualization is unavailable in this lerobot build; "
-            "continuing without it."
-        )
 
 from lerobot.robots import Robot
 
@@ -332,7 +327,7 @@ def read_and_print_angles(robot: Robot):
 def main():
 
     # Create the robot and teleoperator configurations
-    robot_config = SO100FollowerConfig(port="COM6", id="frida_bot", use_degrees=True) # use_degrees=True is very important
+    robot_config = SO100FollowerConfig(port="/dev/tty.usbmodem5A7A0187541", id="marc", use_degrees=True) # use_degrees=True is very important
     # teleop_arm_config = SO100LeaderConfig(port="COM6", id="my_awesome_leader_arm")
     keyboard_config = KeyboardTeleopConfig(id="my_laptop_keyboard")
 
