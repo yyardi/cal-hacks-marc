@@ -31,6 +31,7 @@ from examples.marc.executor import (
     pick_marker,
     return_marker,
 )
+from examples.marc.fetch_so101_urdf import download_so101_package
 from examples.marc.planner.make_plan import build_plan
 from examples.marc.planner.vector_planning import plan_svg_vectors
 from examples.marc.run_svg import _slugify
@@ -39,6 +40,9 @@ from examples.marc.vectorize.potrace_wrap import trace_bitmap_to_svg
 from examples.marc.vectorize.simplify_svg import simplify_svg_file
 
 LOGGER = logging.getLogger(__name__)
+
+DEFAULT_URDF_DIR = Path("examples/marc/SO101")
+DEFAULT_URDF_PATH = DEFAULT_URDF_DIR / "so101_new_calib.urdf"
 
 
 def _unit_scale(unit: str, dpi: float) -> float:
@@ -84,8 +88,37 @@ def _load_marker_config(path: Path) -> dict[str, MarkerSlot]:
     return slots
 
 
+def _resolve_urdf_path(urdf_arg: Path | None) -> Path:
+    if urdf_arg is not None:
+        return urdf_arg.expanduser()
+
+    if DEFAULT_URDF_PATH.exists():
+        return DEFAULT_URDF_PATH
+
+    LOGGER.info(
+        "URDF path not provided. Downloading default SO101 assets to %s",
+        DEFAULT_URDF_DIR,
+    )
+    try:
+        download_so101_package(DEFAULT_URDF_DIR, overwrite=False)
+    except FileExistsError:
+        # Another process may have started downloading simultaneously. Carry on and
+        # rely on the existence check below.
+        pass
+    except Exception as exc:  # pragma: no cover - networking / filesystem errors
+        raise SystemExit(f"Failed to download default URDF: {exc}")
+
+    if not DEFAULT_URDF_PATH.exists():
+        raise SystemExit(
+            "Unable to locate the default SO101 URDF after download. "
+            "Pass --urdf to provide a custom path."
+        )
+
+    return DEFAULT_URDF_PATH
+
+
 def _create_driver(args: argparse.Namespace, page_size: Sequence[float]) -> SO100Driver:
-    urdf_path = args.urdf.expanduser()
+    urdf_path = _resolve_urdf_path(args.urdf)
     executor_cfg = ExecutorConfig(
         travel_speed=args.travel_speed,
         draw_speed=args.draw_speed,
@@ -371,9 +404,11 @@ def _add_connection_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--port", required=True, help="Serial port of the SO100 follower")
     parser.add_argument(
         "--urdf",
-        required=True,
         type=Path,
-        help="Path to the SO100/SO101 follower URDF",
+        help=(
+            "Path to the SO100/SO101 follower URDF. If omitted, the default "
+            "SO101 package will be downloaded automatically."
+        ),
     )
     parser.add_argument(
         "--page-width",
