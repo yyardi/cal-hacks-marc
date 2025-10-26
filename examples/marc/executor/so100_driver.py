@@ -86,12 +86,13 @@ class SO100Driver:
         *,
         port: str,
         urdf_path: str | Path,
-        homography_path: str | Path,
         page_size: Sequence[float],
         executor_cfg: ExecutorConfig | None = None,
         base_pose: Sequence[float] = (0.0, 0.0, 0.0),
         target_frame_name: str = "gripper_frame_link",
         camera_homography_path: str | Path | None = None,
+        homography_path: str | Path | None = None,
+        page_to_robot_matrix: Sequence[Sequence[float]] | np.ndarray | None = None,
     ) -> None:
         self.cfg = executor_cfg or ExecutorConfig()
         self.page_size = np.array(page_size, dtype=float)
@@ -99,7 +100,19 @@ class SO100Driver:
             raise ValueError("page_size must contain exactly two floats: width and height")
 
         self.port = port
-        self.page_to_robot_h = load_homography(homography_path)
+        if (homography_path is None) == (page_to_robot_matrix is None):
+            raise ValueError(
+                "Provide exactly one of homography_path or page_to_robot_matrix to SO100Driver"
+            )
+        if homography_path is not None:
+            self.page_to_robot_h = load_homography(homography_path)
+        else:
+            matrix = np.asarray(page_to_robot_matrix, dtype=float)
+            if matrix.shape != (3, 3):
+                raise ValueError(
+                    "page_to_robot_matrix must be a 3x3 homogeneous transform"
+                )
+            self.page_to_robot_h = matrix
         self.camera_to_page_h = (
             load_homography(camera_homography_path) if camera_homography_path else None
         )
