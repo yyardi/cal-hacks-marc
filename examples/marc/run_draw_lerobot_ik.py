@@ -280,15 +280,26 @@ def execute_plan(args: argparse.Namespace) -> None:
             )
         driver_kwargs = {"homography_path": homography_path}
 
-    driver = SO100Driver(
-        port=args.port,
-        urdf_path=args.urdf,
-        camera_homography_path=args.camera_homography,
-        page_size=(args.page_width, args.page_height),
-        executor_cfg=executor_cfg,
-        base_pose=tuple(args.base_pose),
-        **driver_kwargs,
-    )
+    try:
+        driver = SO100Driver(
+            port=args.port,
+            urdf_path=args.urdf,
+            camera_homography_path=args.camera_homography,
+            page_size=(args.page_width, args.page_height),
+            executor_cfg=executor_cfg,
+            base_pose=tuple(args.base_pose),
+            **driver_kwargs,
+        )
+    except ValueError as exc:
+        message = str(exc)
+        if "Mesh" in message and "could not be found" in message:
+            raise SystemExit(
+                f"{message}. Ensure the URDF and its mesh assets are present. "
+                "Run `python -m examples.marc.fetch_so101_urdf --output-dir examples/marc/SO101` "
+                "to download the official Simulation/SO101 package or point --urdf to a directory "
+                "that already contains the matching assets subfolder."
+            ) from exc
+        raise
 
     with driver.session(calibrate=args.calibrate) as session:
         for color_plan in color_plans:
