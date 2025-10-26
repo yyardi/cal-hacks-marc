@@ -11,7 +11,6 @@ from typing import Iterable
 
 import numpy as np
 
-from .calib.page_to_robot import stage_default_transform
 from .executor import (
     DriverCommand,
     ExecutorConfig,
@@ -48,26 +47,18 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--plan", required=True, type=Path, help="Path to the JSON plan file")
     parser.add_argument("--port", required=True, help="Serial port of the SO100 follower")
     parser.add_argument("--urdf", required=True, type=Path, help="Path to the follower URDF file")
-    parser.add_argument("--homography", type=Path, help="Homography mapping page to robot")
-    parser.add_argument(
-        "--use-stage-default",
-        action="store_true",
-        help=(
-            "Use the baked Cal Hacks stage calibration instead of supplying a homography file. "
-            "Matches the jogged origin/+X/+Y values documented in the README."
-        ),
-    )
+    parser.add_argument("--homography", required=True, type=Path, help="Homography mapping page to robot")
     parser.add_argument(
         "--page-width",
         type=float,
         default=SAFE_WORKSPACE_SIZE_M[0],
-        help=f"Drawing page width in meters (default: {SAFE_WORKSPACE_SIZE_M[0]:.3f})",
+        help="Drawing page width in meters (default: 0.170)",
     )
     parser.add_argument(
         "--page-height",
         type=float,
         default=SAFE_WORKSPACE_SIZE_M[1],
-        help=f"Drawing page height in meters (default: {SAFE_WORKSPACE_SIZE_M[1]:.3f})",
+        help="Drawing page height in meters (default: 0.150)",
     )
     parser.add_argument(
         "--travel-speed",
@@ -215,11 +206,6 @@ def main() -> None:
     args = _parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
 
-    if args.homography is None and not args.use_stage_default:
-        raise SystemExit("--homography is required unless --use-stage-default is set")
-    if args.homography is not None and args.use_stage_default:
-        raise SystemExit("--use-stage-default cannot be combined with --homography")
-
     (plan_width, plan_height), color_plans = _load_plan(args.plan)
     if not np.isclose(plan_width, args.page_width) or not np.isclose(plan_height, args.page_height):
         logger.warning(
@@ -246,24 +232,14 @@ def main() -> None:
     if args.marker_config:
         executor_cfg.marker_slots = _load_marker_config(args.marker_config)
 
-    driver_kwargs: dict[str, object]
-    if args.use_stage_default:
-        stage_transform = stage_default_transform(
-            (args.page_width * 1000.0, args.page_height * 1000.0)
-        )
-        driver_kwargs = {"page_to_robot_matrix": stage_transform.matrix}
-        logger.info("Using baked stage calibration for page-to-robot transform")
-    else:
-        driver_kwargs = {"homography_path": args.homography}
-
     driver = SO100Driver(
         port=args.port,
         urdf_path=args.urdf,
+        homography_path=args.homography,
         camera_homography_path=args.camera_homography,
         page_size=(args.page_width, args.page_height),
         executor_cfg=executor_cfg,
         base_pose=args.base_pose,
-        **driver_kwargs,
     )
 
     with driver.session(calibrate=args.calibrate) as session:

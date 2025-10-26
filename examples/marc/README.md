@@ -6,7 +6,7 @@ Everything inside `examples/marc/` is wired for the Lerobot SO-100/SO-101 follow
 IK, matching the joint ordering used by `teleoperate.py`. The defaults focus on a single marker so we
 can get reliable drawings first before layering colour swaps.
 
-> **Workspace limit:** The SO101 follower comfortably reaches a 173 mm × 150 mm rectangle when the
+> **Workspace limit:** The SO101 follower comfortably reaches a 170 mm × 150 mm rectangle when the
 > page origin is at the lower-left of the drawing. All calibration and planning commands below use
 > this area by default to avoid poses the hardware cannot hit reliably.
 
@@ -75,7 +75,7 @@ printed by `run_svg` and fill in the port/paths that match your setup.
    python -m examples.marc.planner.make_plan \
      examples/marc/out/<slug>-simplified.svg \
      --output examples/marc/out/<slug>_plan.json \
-     --page-width 173 --page-height 150 --unit mm
+     --page-width 170 --page-height 150 --unit mm
    ```
    The resulting JSON stores the page size in metres and an ordered list of strokes. Keep the default
    palette alone for now so the executor streams everything with one marker.
@@ -112,14 +112,14 @@ printed by `run_svg` and fill in the port/paths that match your setup.
    What to do in practice:
    1. Launch your teleoperation tool (the keyboard helper in `examples/lekiwi/teleoperate.py` works
       well—edit the `SO100FollowerConfig` port and URDF path before running `python -m examples.lekiwi.teleoperate`).
-   2. Tape three pencil dots on the page that mark the 173 mm × 150 mm drawing rectangle: origin at the
-      lower-left corner, +X along the long edge, and +Y along the short edge. Jog the pen tip onto each dot and
-      note the follower’s XY readout in metres (the teleop helper prints three decimals). If you are using the Cal Hacks demo rig, you can skip
-      manual entry entirely with `--use-stage-default` to reuse the baked coordinates. The stage setup maps
-      `(0, 0) → (0.195, -0.084)` m, `(page_width, 0) → (0.368, -0.073)` m, and `(0, page_height) → (0.185, 0.066)` m.
+   2. Tape three pencil dots on the page that mark the 170 mm × 150 mm drawing rectangle: origin at the
+      lower-left corner, +X to the right edge, and +Y along the top edge. Jog the pen tip onto each dot and
+      note the follower’s XY readout in millimetres. If you are using the Cal Hacks demo rig, you can skip
+      manual entry entirely with `--use-stage-default` to reuse the baked coordinates
+      `(0.195, -0.084) → (0.339, -0.084) → (0.195, 0.056)` metres.
    3. Enter those three XY pairs when the calibration script prompts for origin, +X, and +Y (or rely on the
-      baked defaults). The stored `.npy` file is the rigid transform from page metres into robot
-      metres, solved via a two-point Procrustes fit (rotation + translation only).
+      baked defaults). The stored `.npy` file is the rigid transform from page millimetres into robot
+      millimetres, solved via a two-point Procrustes fit (rotation + translation only).
 
 5. **(Optional but recommended) Run the hardware test square**
    Before streaming a prompt-driven plan, draw a centred square to confirm the calibration envelope:
@@ -129,17 +129,6 @@ printed by `run_svg` and fill in the port/paths that match your setup.
      --urdf /absolute/path/to/so101_new_calib.urdf \
      --page-to-robot examples/marc/out/calib_page_to_robot.npy \
      --square-size-mm 110 --margin-mm 12 --calibrate
-
-   If you are running on the Cal Hacks rig and skipped manual entry, add `--use-stage-default` instead of
-   `--page-to-robot` and the script will inject the baked transform automatically:
-
-   ```bash
-   python -m examples.marc.run_draw_test_square \
-     --port /dev/tty.usbmodem12345601 \
-     --urdf /absolute/path/to/so101_new_calib.urdf \
-     --use-stage-default \
-     --square-size-mm 110 --margin-mm 12 --calibrate
-   ```
    ```
    The script moves gently and leaves a square centred on the page bounds the homography identified. If
    the square is skewed or off-centre, redo the jog calibration or camera photo before attempting a full
@@ -152,25 +141,10 @@ printed by `run_svg` and fill in the port/paths that match your setup.
      --port /dev/tty.usbmodem12345601 \
      --urdf /absolute/path/to/so101_new_calib.urdf \
      --homography examples/marc/out/calib_page_to_robot.npy \
-     --page-width 0.173 --page-height 0.150 \
+     --page-width 0.170 --page-height 0.150 \
      --z-contact -0.028 --z-safe 0.05 \
      --pitch -90 --roll 0 --yaw 180 \
      --calibrate
-
-   On the stage setup, replace `--homography …` with `--use-stage-default` to stream the baked transform without
-   writing or loading a file:
-
-   ```bash
-   python -m examples.marc.run_draw_lerobot_ik \
-     --plan examples/marc/out/<slug>_plan.json \
-     --port /dev/tty.usbmodem12345601 \
-     --urdf /absolute/path/to/so101_new_calib.urdf \
-     --use-stage-default \
-     --page-width 0.173 --page-height 0.150 \
-     --z-contact -0.028 --z-safe 0.05 \
-     --pitch -90 --roll 0 --yaw 180 \
-     --calibrate
-   ```
    ```
    Swap the port for whatever your OS reports. The driver mirrors the IK routine from `teleoperate.py`
    and streams poses at 15 Hz with 2 cm/s travel and 1 cm/s draw speeds to stay well within the SO101’s
@@ -248,8 +222,8 @@ with \(\lambda\) being an arbitrary projective scale. Because the page is flat, 
 implicitly encoded in \(H\); if the camera moves or the paper bends, the original homography no
 longer matches reality and you need a new overhead photo.
 
-The jog calibration produces a 2D rigid transform that aligns page metres with robot XY
-metres. Given three non-collinear page points \(P_i\) and their measured robot coordinates
+The jog calibration produces a 2D rigid transform that aligns page millimetres with robot XY
+millimetres. Given three non-collinear page points \(P_i\) and their measured robot coordinates
 \(R_i\), we solve the classic Procrustes problem: find rotation matrix \(R\) and translation vector
 \(t\) minimising \(\sum_i \|R P_i + t - R_i\|^2\). The SVD-based solution implemented in
 `calib.page_to_robot.fit_rigid_transform` computes
@@ -269,8 +243,8 @@ T =
 \end{bmatrix},
 \]
 
-which maps page metres into robot metres. During execution we convert a stroke point from
-camera pixels → page millimetres (via \(H\)) → page metres → robot metres (via \(T\)) and then feed those XY
+which maps page millimetres into robot millimetres. During execution we convert a stroke point from
+camera pixels → page millimetres (via \(H\)) → robot millimetres (via \(T\)) and then feed those XY
 targets into the SO101 planar IK solver together with the requested Z heights.
 
 The example photo above—with four taped black squares tight to the paper corners—is a good input for
