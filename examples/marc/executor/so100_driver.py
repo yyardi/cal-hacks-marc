@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections import deque
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -335,42 +336,130 @@ class SO100Driver:
     def _stream_pose(self, target_pose: np.ndarray, speed: float) -> None:
         if self.state.last_pose is None:
             self.state.last_pose = target_pose.copy()
-        start_pose = self.state.last_pose
-        delta = target_pose[:3, 3] - start_pose[:3, 3]
-        distance = float(np.linalg.norm(delta))
-        if distance < 1e-6:
-            return
-        steps = max(1, int(math.ceil(distance / max(speed, 1e-6) / self.dt)))
-        logger.debug("Streaming pose over %s steps", steps)
-        for step in range(1, steps + 1):
-            alpha = step / steps
-            pose = np.eye(4, dtype=float)
-            pose[:3, :3] = target_pose[:3, :3]
-            pose[:3, 3] = start_pose[:3, 3] + alpha * delta
-            self._solve_and_send(pose)
-            time.sleep(self.dt)
-        self.state.last_pose = target_pose
 
-    def _solve_and_send(self, pose: np.ndarray) -> None:
+        max_step = max(speed, 1e-6) * self.dt
+        max_step = max(max_step, 1e-4)
+        queue: deque[tuple[np.ndarray, int]] = deque([(target_pose, 0)])
+        max_depth = 8
+        while queue:
+            goal, depth = queue.popleft()
+            current_pose = self.state.last_pose if self.state.last_pose is not None else goal
+            delta = goal[:3, 3] - current_pose[:3, 3]
+            distance = float(np.linalg.norm(delta))
+            if distance < 1e-6:
+                continue
+
+            if distance > max_step:
+                segments = max(2, int(math.ceil(distance / max_step)))
+                logger.debug(
+                    "Refining long segment (dist=%.4f) into %d steps", distance, segments
+                )
+                for idx in range(segments, 0, -1):
+                    alpha = idx / segments
+                    intermediate = _interpolate_pose(current_pose, goal, alpha)
+                    queue.appendleft((intermediate, depth))
+                continue
+
+            if self._solve_and_send(goal):
+                time.sleep(self.dt)
+                continue
+
+            if depth >= max_depth or distance <= 5e-5:
+                logger.warning(
+                    "Skipping unreachable pose at (%.3f, %.3f, %.3f)",
+                    goal[0, 3],
+                    goal[1, 3],
+                    goal[2, 3],
+                )
+                continue
+
+            logger.debug(
+                "IK failure at depth %d; subdividing segment towards (%.3f, %.3f, %.3f)",
+                depth,
+                goal[0, 3],
+                goal[1, 3],
+                goal[2, 3],
+            )
+            midpoint = _interpolate_pose(current_pose, goal, 0.5)
+            queue.appendleft((goal, depth + 1))
+            queue.appendleft((midpoint, depth + 1))
+
+    def _solve_and_send(self, pose: np.ndarray) -> bool:
         current = (
             self.state.joint_state
             if self.state.joint_state is not None
             else np.zeros(len(self.motor_names), dtype=float)
         )
-        try:
-            solution = self.kinematics.inverse_kinematics(
-                current,
-                pose,
-                position_weight=1.0,
-                orientation_weight=0.01,
+        orientation_weights = (0.01, 0.001, 0.0)
+        z_offsets = [0.0]
+        if self.state.pen_down:
+            z_offsets.extend([0.0015, 0.003])
+        else:
+            z_offsets.extend([0.0015, 0.003, 0.005])
+
+        last_error: Exception | None = None
+
+        for weight in orientation_weights:
+            for dz in z_offsets:
+                adjusted_pose = pose.copy()
+                adjusted_pose[2, 3] += dz
+                try:
+                    solution = self.kinematics.inverse_kinematics(
+                        current,
+                        adjusted_pose,
+                        position_weight=1.0,
+                        orientation_weight=weight,
+                    )
+                except Exception as exc:  # pragma: no cover - defensive logging for field debugging
+                    last_error = exc
+                    continue
+
+                if not np.all(np.isfinite(solution)):
+                    last_error = ValueError("Non-finite IK solution")
+                    continue
+
+                self.state.joint_state = solution
+                action = {
+                    f"{name}.pos": float(val) for name, val in zip(self.motor_names, solution)
+                }
+                action["gripper.pos"] = 0.0
+                self.robot.send_action(action)
+                self.state.last_pose = adjusted_pose
+                if dz > 1e-6:
+                    logger.debug(
+                        "Raised target Z by %.1f mm to satisfy IK", dz * 1000.0
+                    )
+                if weight < 0.01:
+                    logger.debug(
+                        "Solved IK with relaxed orientation weight %.4f", weight
+                    )
+                return True
+
+        if last_error is not None:
+            logger.warning(
+                "Inverse kinematics failed at (%.3f, %.3f, %.3f): %s",
+                pose[0, 3],
+                pose[1, 3],
+                pose[2, 3],
+                last_error,
             )
-        except Exception as exc:  # pragma: no cover - defensive logging for field debugging
-            logger.error("Inverse kinematics failed: %s", exc)
-            raise
-        self.state.joint_state = solution
-        action = {f"{name}.pos": float(val) for name, val in zip(self.motor_names, solution)}
-        action["gripper.pos"] = 0.0
-        self.robot.send_action(action)
+        else:
+            logger.warning(
+                "Inverse kinematics failed at (%.3f, %.3f, %.3f) with no exception",
+                pose[0, 3],
+                pose[1, 3],
+                pose[2, 3],
+            )
+        return False
+
+
+def _interpolate_pose(start_pose: np.ndarray, end_pose: np.ndarray, alpha: float) -> np.ndarray:
+    alpha = float(max(0.0, min(1.0, alpha)))
+    pose = np.eye(4, dtype=float)
+    pose[:3, :3] = end_pose[:3, :3]
+    pose[:3, 3] = start_pose[:3, 3] + alpha * (end_pose[:3, 3] - start_pose[:3, 3])
+    return pose
+
 
     # ------------------------------------------------------------------
     # Correction utilities
