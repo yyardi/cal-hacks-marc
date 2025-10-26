@@ -7,7 +7,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import numpy as np
 
@@ -46,7 +46,7 @@ class ColorPlan:
     raster_path: Path | None = None
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", required=True, type=Path, help="Path to the JSON plan file")
     parser.add_argument("--port", required=True, help="Serial port of the SO100 follower")
@@ -142,7 +142,7 @@ def _parse_args() -> argparse.Namespace:
         help="Resolution to warp correction imagery into",
     )
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def _load_plan(path: Path) -> tuple[tuple[float, float], list[ColorPlan]]:
@@ -229,10 +229,7 @@ def _validate_plan_bounds(color_plans: list[ColorPlan], page_width: float, page_
         )
 
 
-def main() -> None:
-    args = _parse_args()
-    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
-
+def execute_plan(args: argparse.Namespace) -> None:
     if args.use_stage_default and args.homography:
         logger.warning(
             "--use-stage-default supplied; ignoring explicit --homography path %s",
@@ -289,7 +286,7 @@ def main() -> None:
         camera_homography_path=args.camera_homography,
         page_size=(args.page_width, args.page_height),
         executor_cfg=executor_cfg,
-        base_pose=args.base_pose,
+        base_pose=tuple(args.base_pose),
         **driver_kwargs,
     )
 
@@ -331,5 +328,20 @@ def main() -> None:
                 )
 
 
+def main(argv: Sequence[str] | None = None) -> None:
+    args = _parse_args(argv)
+    logging.basicConfig(level=getattr(logging, args.log_level.upper(), logging.INFO))
+    execute_plan(args)
+
+
 if __name__ == "__main__":
     main()
+
+
+__all__ = [
+    "execute_plan",
+    "main",
+    "_parse_args",
+    "_load_plan",
+    "_validate_plan_bounds",
+]
