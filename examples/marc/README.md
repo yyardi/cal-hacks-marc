@@ -52,14 +52,25 @@ out/         # artefacts (PNG, SVG, plans, calibration files) - gitignored
    export HF_TOKEN=hf_xxx_read_token  # or run `huggingface-cli login`
    ```
 
-6. **Grab the SO101 URDF** that ships with the arm (`Simulation/SO101/so101_new_calib.urdf`) and keep
-   track of whichever serial port appears when you plug the follower in (`/dev/tty.usbmodem*` on macOS
-   and Linux). You will pass the port on the CLI; no source edits are required when it changes.
+6. **Grab the SO101 URDF + meshes.** Every SO-ARM100/SO101 follower ships with a USB stick that contains
+   the full `Simulation/SO101/` folder (URDF plus STL meshes). If you cannot find it locally, download the
+   exact same payload from the manufacturer’s GitHub mirror by running:
+
+   ```bash
+   python -m examples.marc.fetch_so101_urdf
+   ```
+
+   The helper extracts `examples/marc/SO101/` with the URDF, STL meshes, textures, and verifies the URDF’s
+   SHA256 hash so you know it matches the official release. Track whichever serial port appears when you
+   plug the follower in (`/dev/tty.usbmodem*` on macOS and Linux). You will pass the port on the CLI; no
+   source edits are required when it changes.
 
 ## 2. One-shot command sequence (prompt → draw)
 
 Run these commands sequentially every time you want a new drawing. Replace `<slug>` with the basename
-printed by `run_svg` and fill in the port/paths that match your setup.
+printed by `run_svg` and fill in the port/paths that match your setup. Prefer an
+all-in-one helper? Skip ahead to the note after step 6 for the
+`examples.marc.run_prompt_to_robot` workflow.
 
 1. **Generate raster + SVG**
    ```bash
@@ -75,10 +86,13 @@ printed by `run_svg` and fill in the port/paths that match your setup.
    python -m examples.marc.planner.make_plan \
      examples/marc/out/<slug>-simplified.svg \
      --output examples/marc/out/<slug>_plan.json \
-     --page-width 173 --page-height 150 --unit mm
+     --page-width 173 --page-height 150 --unit mm --margin 5
    ```
-   The resulting JSON stores the page size in metres and an ordered list of strokes. Keep the default
-   palette alone for now so the executor streams everything with one marker.
+   The planner now recentres and uniformly scales the SVG so it lands in the
+   middle of the safe workspace. The CLI prints the normalised bounds and the
+   percentage of sampled points that remain inside the page after scaling.
+   Keep the default palette alone for now so the executor streams everything
+   with one marker.
 
 3. **Capture an overhead photo for the camera homography**
    *If you do not have a fixed camera yet, skip this step and leave out `--camera-homography` when
@@ -132,7 +146,7 @@ printed by `run_svg` and fill in the port/paths that match your setup.
    python -m examples.marc.run_draw_test_square \
      --port /dev/tty.usbmodem12345601 \
      --urdf /absolute/path/to/so101_new_calib.urdf \
-     --square-size-mm 110 --margin-mm 12 --calibrate
+     --square-size-mm 110 --margin-mm 12
    ```
 
    On the Cal Hacks rig you can also skip file IO entirely by passing `--use-stage-default`, which injects the
@@ -143,11 +157,18 @@ printed by `run_svg` and fill in the port/paths that match your setup.
      --port /dev/tty.usbmodem12345601 \
      --urdf /absolute/path/to/so101_new_calib.urdf \
      --use-stage-default \
-     --square-size-mm 110 --margin-mm 12 --calibrate
+     --square-size-mm 110 --margin-mm 12
    ```
    The script moves gently and leaves a square centred on the page bounds the homography identified. If
    the square is skewed or off-centre, redo the jog calibration or camera photo before attempting a full
    drawing.
+
+   The square helper (and the full drawing CLI below) default to storing the follower calibration under
+   `~/.cache/huggingface/lerobot/calibration/robots/so100_follower/marc_so101.json`. If that file is missing,
+   the driver automatically launches the interactive calibration routine on connect and reuses the cached
+   offsets on future runs. Pass `--calibrate` whenever you want to re-run the routine manually. To keep
+   multiple rigs separate, pass `--follower-id <name>`; add `--follower-calibration-dir <path>` if you prefer
+   to keep the calibration JSON alongside the repo instead of the global cache.
 
 6. **Stream the plan to the arm at gentle speeds**
    ```bash
@@ -157,9 +178,33 @@ printed by `run_svg` and fill in the port/paths that match your setup.
      --urdf /absolute/path/to/so101_new_calib.urdf \
      --page-width 0.173 --page-height 0.150 \
      --z-contact -0.028 --z-safe 0.05 \
-     --pitch -90 --roll 0 --yaw 180 \
-     --calibrate
+     --pitch -90 --roll 0 --yaw 180
    ```
+
+   To collapse the entire prompt → draw workflow into one command, run:
+
+   ```bash
+   python -m examples.marc.run_prompt_to_robot \
+     "minimal line-art cat, black outline" \
+     --output-dir examples/marc/out \
+     --port /dev/tty.usbmodem12345601 \
+     --urdf /absolute/path/to/so101_new_calib.urdf \
+     --page-width 173 --page-height 150 --unit mm --margin 5
+  ```
+
+  Already generated the PNG/SVG/plan trio for that slug? Add `--reuse-intermediates`
+  to reuse the artefacts in `examples/marc/out` and jump straight to validation and
+  streaming.
+
+  The CLI shares the same calibration defaults as `run_draw_lerobot_ik`. On a fresh setup it will launch the
+  calibration flow automatically; add `--calibrate` when you want to refresh the offsets manually. Use
+  `--follower-id` and `--follower-calibration-dir` here too if you need to manage multiple hardware setups or
+  relocate the calibration files.
+
+  Add `--skip-draw` (or omit `--port`/`--urdf`) to stop after generating the
+  plan. The helper shares the same auto-scaling diagnostics as
+  `examples.marc.planner.make_plan` and then streams the validated plan to the
+  arm.
 
    The executor falls back to `examples/marc/out/calib_page_to_robot.npy` when `--homography` is omitted.
    If you need to point at a different calibration file, pass `--homography /path/to/transform.npy`. To
