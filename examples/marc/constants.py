@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 # The SO100/SO101 follower comfortably reaches a rectangle that is roughly
-# 173 mm wide by 150 mm tall when the page origin is anchored to the lower-left
+# 170 mm wide by 150 mm tall when the page origin is anchored to the lower-left
 # corner of the drawing.  We keep these dimensions in a single module so the
 # planner, calibration helpers, and runtime checks all agree on the workspace
 # size.
-SAFE_WORKSPACE_WIDTH_MM: float = 173.0
+SAFE_WORKSPACE_WIDTH_MM: float = 170.0
 SAFE_WORKSPACE_HEIGHT_MM: float = 150.0
 
 # Convenient tuples in both millimetres and metres for CLI defaults.
@@ -20,30 +20,16 @@ SAFE_WORKSPACE_SIZE_M: tuple[float, float] = (
     SAFE_WORKSPACE_HEIGHT_MM / 1000.0,
 )
 
-# Stage layout measured on the Cal Hacks demo rig.  All units are metres and
+# Stage defaults measured on the Cal Hacks demo rig.  Values are in metres and
 # come from jogging the follower to the page corners shown in the runbook
-# photo.  The top-left corner is derived so the transform stays orthogonal to
-# the page axes.
+# photo.  We expose them here so both the calibration helper and executor CLIs
+# can share the same baked-in workspace without copy/pasting numbers.
 DEFAULT_STAGE_ORIGIN_M: tuple[float, float] = (0.195, -0.084)
-DEFAULT_STAGE_BOTTOM_RIGHT_M: tuple[float, float] = (0.186, 0.056)
-DEFAULT_STAGE_TOP_RIGHT_M: tuple[float, float] = (0.339, 0.060)
-
-# We express the +X (long edge) and +Y (short edge) reference points in page
-# coordinates so the calibration helper can feed them straight into the
-# Procrustes fit.  +X corresponds to the page coordinate (width, 0) while +Y
-# maps to (0, height).
-DEFAULT_STAGE_X_POINT_M: tuple[float, float] = (
-    DEFAULT_STAGE_TOP_RIGHT_M[0] - (DEFAULT_STAGE_BOTTOM_RIGHT_M[0] - DEFAULT_STAGE_ORIGIN_M[0]),
-    DEFAULT_STAGE_TOP_RIGHT_M[1] - (DEFAULT_STAGE_BOTTOM_RIGHT_M[1] - DEFAULT_STAGE_ORIGIN_M[1]),
-)
-DEFAULT_STAGE_Y_POINT_M: tuple[float, float] = DEFAULT_STAGE_BOTTOM_RIGHT_M
+DEFAULT_STAGE_X_POINT_M: tuple[float, float] = (0.339, -0.084)
+DEFAULT_STAGE_Y_POINT_M: tuple[float, float] = (0.195, 0.056)
 
 # Convert those to millimetres for convenience.
 DEFAULT_STAGE_ORIGIN_MM: tuple[float, float] = tuple(v * 1000.0 for v in DEFAULT_STAGE_ORIGIN_M)
-DEFAULT_STAGE_BOTTOM_RIGHT_MM: tuple[float, float] = tuple(
-    v * 1000.0 for v in DEFAULT_STAGE_BOTTOM_RIGHT_M
-)
-DEFAULT_STAGE_TOP_RIGHT_MM: tuple[float, float] = tuple(v * 1000.0 for v in DEFAULT_STAGE_TOP_RIGHT_M)
 DEFAULT_STAGE_X_POINT_MM: tuple[float, float] = tuple(v * 1000.0 for v in DEFAULT_STAGE_X_POINT_M)
 DEFAULT_STAGE_Y_POINT_MM: tuple[float, float] = tuple(v * 1000.0 for v in DEFAULT_STAGE_Y_POINT_M)
 
@@ -65,13 +51,9 @@ __all__ = [
     "SAFE_WORKSPACE_SIZE_MM",
     "SAFE_WORKSPACE_SIZE_M",
     "DEFAULT_STAGE_ORIGIN_M",
-    "DEFAULT_STAGE_BOTTOM_RIGHT_M",
-    "DEFAULT_STAGE_TOP_RIGHT_M",
     "DEFAULT_STAGE_X_POINT_M",
     "DEFAULT_STAGE_Y_POINT_M",
     "DEFAULT_STAGE_ORIGIN_MM",
-    "DEFAULT_STAGE_BOTTOM_RIGHT_MM",
-    "DEFAULT_STAGE_TOP_RIGHT_MM",
     "DEFAULT_STAGE_X_POINT_MM",
     "DEFAULT_STAGE_Y_POINT_MM",
     "DEFAULT_STAGE_Z_CONTACT",
