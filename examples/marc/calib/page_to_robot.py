@@ -9,7 +9,12 @@ from typing import Iterable
 
 import numpy as np
 
-from .homography import DEFAULT_PAGE_SIZE_MM
+from ..constants import (
+    DEFAULT_STAGE_BOTTOM_RIGHT_M,
+    DEFAULT_STAGE_ORIGIN_M,
+    DEFAULT_STAGE_TOP_RIGHT_M,
+    SAFE_WORKSPACE_SIZE_MM,
+)
 
 OUTPUT_PATH = Path("examples/marc/out/calib_page_to_robot.npy")
 
@@ -41,6 +46,46 @@ def load_rigid_transform(path: Path | str) -> RigidTransform2D:
     rotation = matrix[:2, :2]
     translation = matrix[:2, 2]
     return RigidTransform2D(rotation, translation)
+
+
+def stage_default_transform(
+    page_size_mm: tuple[float, float] = SAFE_WORKSPACE_SIZE_MM,
+) -> RigidTransform2D:
+    """Return the rigid transform baked into the Cal Hacks demo rig.
+
+    The transform maps page metres (origin at the lower-left corner) into
+    robot metres using the measured origin, bottom-right, and top-right
+    points collected on stage.  We derive orthonormal axes from those
+    measurements so the returned transform matches the physical orientation
+    of the taped sheet; the absolute page dimensions come from the stroke
+    coordinates supplied at runtime.
+    """
+
+    origin = np.array(DEFAULT_STAGE_ORIGIN_M, dtype=np.float64)
+    bottom_right = np.array(DEFAULT_STAGE_BOTTOM_RIGHT_M, dtype=np.float64)
+    top_right = np.array(DEFAULT_STAGE_TOP_RIGHT_M, dtype=np.float64)
+
+    y_vec = bottom_right - origin
+    y_norm = np.linalg.norm(y_vec)
+    if y_norm < 1e-9:
+        raise ValueError("Stage default Y vector has near-zero length")
+    y_axis = y_vec / y_norm
+
+    x_vec = top_right - bottom_right
+    x_vec -= np.dot(x_vec, y_axis) * y_axis
+    x_norm = np.linalg.norm(x_vec)
+    if x_norm < 1e-9:
+        raise ValueError("Stage default X vector has near-zero length after orthogonalisation")
+    x_axis = x_vec / x_norm
+
+    rotation = np.column_stack((x_axis, y_axis))
+    if np.linalg.det(rotation) < 0:
+        rotation[:, 1] *= -1.0
+
+    # The rotation operates on metre-space coordinates, so page widths/heights
+    # simply scale the unit axes when the homogeneous matrix is applied.
+    transform = RigidTransform2D(rotation, origin)
+    return transform
 
 
 def fit_rigid_transform(page_points: np.ndarray, robot_points: np.ndarray) -> RigidTransform2D:
@@ -94,8 +139,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         nargs=2,
         type=float,
         metavar=("WIDTH", "HEIGHT"),
-        default=DEFAULT_PAGE_SIZE_MM,
-        help="Physical page size in millimetres. Defaults to US Letter.",
+        default=SAFE_WORKSPACE_SIZE_MM,
+        help=(
+            "Physical drawing area in millimetres. The default (173×150 mm)"
+            " matches the safe SO101 workspace."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -107,6 +155,14 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         "--non-interactive",
         action="store_true",
         help="Read robot coordinates from stdin without prompts (three lines, origin/+X/+Y)",
+    )
+    parser.add_argument(
+        "--use-stage-default",
+        action="store_true",
+        help=(
+            "Skip prompts and write the baked-in Cal Hacks stage calibration. "
+            "Use this when the paper is taped in the standard pose shown in the runbook photo."
+        ),
     )
     return parser.parse_args(list(argv) if argv is not None else None)
 
@@ -127,7 +183,9 @@ def read_points_from_stdin() -> np.ndarray:
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
 
-    page_width, page_height = args.page_size_mm
+    page_width_mm, page_height_mm = args.page_size_mm
+    page_width = page_width_mm / 1000.0
+    page_height = page_height_mm / 1000.0
     page_points = np.array(
         [
             [0.0, 0.0],
@@ -139,14 +197,39 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     print("MARC page-to-robot calibration")
     print("--------------------------------")
-    print("Jog the robot to the requested locations and record the XY coordinates.")
+    print(
+        "Jog the robot to the requested locations and record the XY coordinates"
+        " reported by your teleoperation tool."
+    )
+    print()
+    print(
+        "Workspace: %.1f mm wide × %.1f mm tall (origin at the lower-left)."
+        % (page_width_mm, page_height_mm)
+    )
+    print(
+        "Tip: run `python -m examples.lekiwi.teleoperate` in another terminal"
+        " after editing the SO100FollowerConfig port/URDF to match your rig."
+    )
+    print("Position the pen on each pencil dot, then enter the XY pair here.")
+    print("All coordinates should be provided in metres to match the teleop readout.")
 
-    if args.non_interactive:
-        robot_points = read_points_from_stdin()
+    if args.use_stage_default and args.non_interactive:
+        raise ValueError("--use-stage-default and --non-interactive are mutually exclusive")
+
+    if args.use_stage_default:
+        transform = stage_default_transform(args.page_size_mm)
+        origin = transform.translation
+        x_point = origin + transform.rotation @ np.array([page_width, 0.0])
+        y_point = origin + transform.rotation @ np.array([0.0, page_height])
+        print("Using baked stage coordinates (origin, +X, +Y) in metres:")
+        for label, point in zip(("origin", "+X", "+Y"), (origin, x_point, y_point)):
+            print(f"  {label:>6}: {point[0]:7.3f}, {point[1]:7.3f}")
     else:
-        robot_points = gather_robot_points(("origin", "+X", "+Y"))
-
-    transform = fit_rigid_transform(page_points, robot_points)
+        if args.non_interactive:
+            robot_points = read_points_from_stdin()
+        else:
+            robot_points = gather_robot_points(("origin", "+X", "+Y"))
+        transform = fit_rigid_transform(page_points, robot_points)
     transform.save(args.output)
 
     print("\nCalibration complete.")
@@ -168,6 +251,7 @@ __all__ = [
     "fit_rigid_transform",
     "gather_robot_points",
     "load_rigid_transform",
+    "stage_default_transform",
     "main",
     "OUTPUT_PATH",
 ]

@@ -86,12 +86,13 @@ class SO100Driver:
         *,
         port: str,
         urdf_path: str | Path,
-        homography_path: str | Path,
         page_size: Sequence[float],
         executor_cfg: ExecutorConfig | None = None,
         base_pose: Sequence[float] = (0.0, 0.0, 0.0),
         target_frame_name: str = "gripper_frame_link",
         camera_homography_path: str | Path | None = None,
+        homography_path: str | Path | None = None,
+        page_to_robot_matrix: Sequence[Sequence[float]] | np.ndarray | None = None,
     ) -> None:
         self.cfg = executor_cfg or ExecutorConfig()
         self.page_size = np.array(page_size, dtype=float)
@@ -99,7 +100,19 @@ class SO100Driver:
             raise ValueError("page_size must contain exactly two floats: width and height")
 
         self.port = port
-        self.page_to_robot_h = load_homography(homography_path)
+        if (homography_path is None) == (page_to_robot_matrix is None):
+            raise ValueError(
+                "Provide exactly one of homography_path or page_to_robot_matrix to SO100Driver"
+            )
+        if homography_path is not None:
+            self.page_to_robot_h = load_homography(homography_path)
+        else:
+            matrix = np.asarray(page_to_robot_matrix, dtype=float)
+            if matrix.shape != (3, 3):
+                raise ValueError(
+                    "page_to_robot_matrix must be a 3x3 homogeneous transform"
+                )
+            self.page_to_robot_h = matrix
         self.camera_to_page_h = (
             load_homography(camera_homography_path) if camera_homography_path else None
         )
@@ -173,7 +186,17 @@ class SO100Driver:
     # ------------------------------------------------------------------
     # Command handlers
     # ------------------------------------------------------------------
-    def _cmd_move_to(self, x: float, y: float, *, z: float | None = None, speed: float | None = None) -> None:
+    def _cmd_move_to(
+        self,
+        x: float,
+        y: float,
+        *,
+        z: float | None = None,
+        speed: float | None = None,
+        validate: bool = True,
+    ) -> None:
+        if validate:
+            self._assert_within_workspace(x, y)
         pose = self._page_to_pose(x, y, z)
         if self.state.last_pose is None:
             self.state.last_pose = pose.copy()
@@ -210,15 +233,28 @@ class SO100Driver:
 
     def _visit_marker(self, xy: Sequence[float], contact_z: float) -> None:
         self._cmd_pen_state(False)
-        self._cmd_move_to(xy[0], xy[1], z=self.cfg.z_safe, speed=self.cfg.travel_speed)
+        self._cmd_move_to(
+            xy[0],
+            xy[1],
+            z=self.cfg.z_safe,
+            speed=self.cfg.travel_speed,
+            validate=False,
+        )
         self._cmd_move_to(
             xy[0],
             xy[1],
             z=contact_z - self.cfg.marker_z_offset,
             speed=self.cfg.pick_speed,
+            validate=False,
         )
         time.sleep(0.25)
-        self._cmd_move_to(xy[0], xy[1], z=self.cfg.z_safe, speed=self.cfg.travel_speed)
+        self._cmd_move_to(
+            xy[0],
+            xy[1],
+            z=self.cfg.z_safe,
+            speed=self.cfg.travel_speed,
+            validate=False,
+        )
 
     def _page_to_pose(self, x: float, y: float, z: float | None) -> np.ndarray:
         page_point = np.array([x, y, 1.0], dtype=float)
@@ -237,6 +273,17 @@ class SO100Driver:
             pose[2, 3] = float(z)
         pose[:3, 3] += self.base_pose
         return pose
+
+    # ------------------------------------------------------------------
+    # Workspace validation
+    # ------------------------------------------------------------------
+    def _assert_within_workspace(self, x: float, y: float) -> None:
+        eps = 1e-6
+        if x < -eps or y < -eps or x > self.page_size[0] + eps or y > self.page_size[1] + eps:
+            raise ValueError(
+                f"Requested point ({x:.4f}, {y:.4f}) lies outside the configured workspace "
+                f"(expected 0 ≤ x ≤ {self.page_size[0]:.4f}, 0 ≤ y ≤ {self.page_size[1]:.4f})."
+            )
 
     def _stream_pose(self, target_pose: np.ndarray, speed: float) -> None:
         if self.state.last_pose is None:
