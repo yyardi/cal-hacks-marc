@@ -50,16 +50,6 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     default_page_width_mm = float(SAFE_WORKSPACE_SIZE_MM[0])
     default_page_height_mm = float(SAFE_WORKSPACE_SIZE_MM[1])
     parser.add_argument(
-        "--use-stage-default",
-        action="store_true",
-        help=(
-            "Use the baked Cal Hacks stage calibration instead of loading a file. "
-            "This matches the origin/+X/+Y jog described in the README."
-        ),
-    )
-    default_page_width_mm = float(SAFE_WORKSPACE_SIZE_MM[0])
-    default_page_height_mm = float(SAFE_WORKSPACE_SIZE_MM[1])
-    parser.add_argument(
         "--page-width-mm",
         type=float,
         default=default_page_width_mm,
@@ -119,6 +109,16 @@ def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--command-rate", type=float, default=15.0, help="Command streaming rate (Hz)")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity")
     parser.add_argument("--calibrate", action="store_true", help="Run follower calibration on connect")
+    parser.add_argument(
+        "--follower-id",
+        default="marc_so101",
+        help="Identifier used when loading/saving follower calibration JSON",
+    )
+    parser.add_argument(
+        "--follower-calibration-dir",
+        type=Path,
+        help="Directory containing follower calibration JSON files",
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -211,6 +211,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         urdf_path=args.urdf,
         page_size=page_size_m,
         executor_cfg=cfg,
+        follower_id=args.follower_id,
+        calibration_dir=args.follower_calibration_dir,
         **driver_kwargs,
     )
 
