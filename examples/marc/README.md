@@ -163,6 +163,13 @@ all-in-one helper? Skip ahead to the note after step 6 for the
    the square is skewed or off-centre, redo the jog calibration or camera photo before attempting a full
    drawing.
 
+   The square helper (and the full drawing CLI below) now default to storing the follower calibration under
+   `~/.cache/huggingface/lerobot/calibration/robots/so100_follower/marc_so101.json`. The first time you
+   connect without a saved JSON the driver will automatically run the interactive calibration routine so the
+   motors know their offsets. To keep multiple rigs separate, pass `--follower-id <name>`; add
+   `--follower-calibration-dir <path>` if you prefer to keep the calibration JSON alongside the repo instead of
+   the global cache.
+
 6. **Stream the plan to the arm at gentle speeds**
    ```bash
    python -m examples.marc.run_draw_lerobot_ik \
@@ -189,6 +196,11 @@ all-in-one helper? Skip ahead to the note after step 6 for the
   Already generated the PNG/SVG/plan trio for that slug? Add `--reuse-intermediates`
   to reuse the artefacts in `examples/marc/out` and jump straight to validation and
   streaming.
+
+  The CLI shares the same calibration defaults as `run_draw_lerobot_ik`. If the follower offsets are missing it
+  will prompt for calibration once and then reuse the saved JSON on future runs. Use `--follower-id` and
+  `--follower-calibration-dir` here too if you need to manage multiple hardware setups or relocate the
+  calibration files.
 
   Add `--skip-draw` (or omit `--port`/`--urdf`) to stop after generating the
   plan. The helper shares the same auto-scaling diagnostics as

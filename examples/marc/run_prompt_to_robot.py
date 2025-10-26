@@ -97,6 +97,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--port", help="Serial port of the SO100 follower")
     parser.add_argument("--urdf", type=Path, help="Path to the follower URDF file")
+    parser.add_argument(
+        "--follower-id",
+        default="marc_so101",
+        help="Identifier used when loading/saving follower calibration JSON",
+    )
+    parser.add_argument(
+        "--follower-calibration-dir",
+        type=Path,
+        help="Directory containing follower calibration JSON files",
+    )
     parser.add_argument("--homography", type=Path, help="Page-to-robot homography file")
     parser.add_argument("--use-stage-default", action="store_true", help="Use the baked stage calibration")
     parser.add_argument("--camera-homography", type=Path, help="Optional camera correction homography")
@@ -174,6 +184,12 @@ def _build_draw_argv(args: argparse.Namespace, plan_path: Path, page_width_m: fl
         argv.extend(["--camera-homography", str(args.camera_homography)])
     if args.homography:
         argv.extend(["--homography", str(args.homography)])
+    if args.follower_id:
+        argv.extend(["--follower-id", args.follower_id])
+    if args.follower_calibration_dir:
+        argv.extend(
+            ["--follower-calibration-dir", str(args.follower_calibration_dir)]
+        )
     if args.use_stage_default:
         argv.append("--use-stage-default")
     if args.calibrate:

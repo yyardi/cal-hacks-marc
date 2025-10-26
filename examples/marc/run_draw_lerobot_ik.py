@@ -52,6 +52,22 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", required=True, help="Serial port of the SO100 follower")
     parser.add_argument("--urdf", required=True, type=Path, help="Path to the follower URDF file")
     parser.add_argument(
+        "--follower-id",
+        default="marc_so101",
+        help=(
+            "Identifier used when loading/saving follower calibration JSON. "
+            "Set this to reuse an existing file or to keep multiple setups separate."
+        ),
+    )
+    parser.add_argument(
+        "--follower-calibration-dir",
+        type=Path,
+        help=(
+            "Directory where follower calibration JSON files are stored. "
+            "Defaults to the Hugging Face lerobot cache if omitted."
+        ),
+    )
+    parser.add_argument(
         "--homography",
         type=Path,
         help=(
@@ -288,6 +304,8 @@ def execute_plan(args: argparse.Namespace) -> None:
             page_size=(args.page_width, args.page_height),
             executor_cfg=executor_cfg,
             base_pose=tuple(args.base_pose),
+            follower_id=args.follower_id,
+            calibration_dir=args.follower_calibration_dir,
             **driver_kwargs,
         )
     except ValueError as exc:
